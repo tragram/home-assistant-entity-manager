@@ -44,7 +44,12 @@ def extract_entity_ids(data: Any) -> set:
     return found
 
 
-def replace_entity_ref_in_string(value: str, old_entity_id: str, new_entity_id: str) -> Tuple[str, bool]:
+def replace_entity_ref_in_string(
+    value: str,
+    old_entity_id: str,
+    new_entity_id: str,
+    replace_embedded: bool = False,
+) -> Tuple[str, bool]:
     """Ersetzt eine Entity-ID in einem einzelnen String.
 
     Args:
@@ -72,10 +77,23 @@ def replace_entity_ref_in_string(value: str, old_entity_id: str, new_entity_id: 
         if new_value != value:
             return new_value, True
 
+    # Custom dashboard cards often embed entity IDs in JavaScript or CSS
+    # expressions. Keep token boundaries so similarly named IDs are untouched.
+    if replace_embedded and old_entity_id in value:
+        pattern = rf"(?<![a-z0-9_]){re.escape(old_entity_id)}(?![a-z0-9_])"
+        new_value = re.sub(pattern, new_entity_id, value)
+        if new_value != value:
+            return new_value, True
+
     return value, False
 
 
-def replace_entity_in_obj(data: Any, old_entity_id: str, new_entity_id: str) -> bool:
+def replace_entity_in_obj(
+    data: Any,
+    old_entity_id: str,
+    new_entity_id: str,
+    replace_embedded: bool = False,
+) -> bool:
     """Ersetzt eine Entity-ID rekursiv in einer beliebigen Datenstruktur (in-place).
 
     Behandelt Strings (exakt oder Template), Listen und verschachtelte Dicts/Listen.
@@ -101,23 +119,33 @@ def replace_entity_in_obj(data: Any, old_entity_id: str, new_entity_id: str) -> 
 
         for key, value in list(data.items()):
             if isinstance(value, str):
-                new_value, did_change = replace_entity_ref_in_string(value, old_entity_id, new_entity_id)
+                new_value, did_change = replace_entity_ref_in_string(
+                    value,
+                    old_entity_id,
+                    new_entity_id,
+                    replace_embedded,
+                )
                 if did_change:
                     data[key] = new_value
                     changed = True
             elif isinstance(value, (dict, list)):
-                if replace_entity_in_obj(value, old_entity_id, new_entity_id):
+                if replace_entity_in_obj(value, old_entity_id, new_entity_id, replace_embedded):
                     changed = True
 
     elif isinstance(data, list):
         for i, item in enumerate(data):
             if isinstance(item, str):
-                new_value, did_change = replace_entity_ref_in_string(item, old_entity_id, new_entity_id)
+                new_value, did_change = replace_entity_ref_in_string(
+                    item,
+                    old_entity_id,
+                    new_entity_id,
+                    replace_embedded,
+                )
                 if did_change:
                     data[i] = new_value
                     changed = True
             elif isinstance(item, (dict, list)):
-                if replace_entity_in_obj(item, old_entity_id, new_entity_id):
+                if replace_entity_in_obj(item, old_entity_id, new_entity_id, replace_embedded):
                     changed = True
 
     return changed

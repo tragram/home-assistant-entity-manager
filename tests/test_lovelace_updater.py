@@ -57,6 +57,24 @@ def test_update_all_dashboards_storage_only():
     assert "yaml1" not in changed
 
 
+def test_update_dashboard_without_mode_metadata_and_embedded_reference():
+    ws = MockWS(
+        dashboards=[{"url_path": "custom-dashboard"}],
+        configs={
+            None: None,
+            "custom-dashboard": {
+                "cards": [{"type": "custom:button-card", "value": "return states['sensor.old'].state"}]
+            },
+        },
+    )
+    updater = LovelaceUpdater(ws)
+
+    changed = _run(updater.update_all_dashboards("sensor.old", "sensor.new"))
+
+    assert changed == ["custom-dashboard"]
+    assert "sensor.new" in ws._cfgs["custom-dashboard"]["cards"][0]["value"]
+
+
 def test_scan_renames_finds_yaml_only():
     # storage already rewritten -> only yaml dashboards still contain the old id
     ws = MockWS(

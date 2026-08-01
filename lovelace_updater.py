@@ -13,7 +13,7 @@ Wird für den Geräte-Austausch genutzt:
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from entity_ref_utils import extract_entity_ids, replace_entity_in_obj
 from ha_websocket import HomeAssistantWebSocket
@@ -38,17 +38,18 @@ class LovelaceUpdater:
         """Benutzerdefinierte Dashboards (url_path, mode, title)."""
         resp = await self._call({"type": "lovelace/dashboards/list"})
         if not resp.get("success"):
-            logger.warning("lovelace/dashboards/list failed: %s", resp.get("error"))
+            logger.warning("Failed to list Lovelace dashboards: %s", resp.get("error"))
             return []
         return resp.get("result", []) or []
 
     async def get_config(self, url_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Config eines Dashboards (url_path=None = Standard-Dashboard). None bei Fehler/YAML-Mode."""
-        msg: Dict[str, Any] = {"type": "lovelace/config"}
+        msg: Dict[str, Any] = {"type": "lovelace/config", "force": True}
         if url_path:
             msg["url_path"] = url_path
         resp = await self._call(msg)
         if not resp.get("success"):
+            logger.warning("Failed to read dashboard %s: %s", url_path or "default", resp.get("error"))
             return None
         return resp.get("result")
 
@@ -58,15 +59,18 @@ class LovelaceUpdater:
             msg["url_path"] = url_path
         resp = await self._call(msg)
         if not resp.get("success"):
-            logger.warning("lovelace/config/save (%s) failed: %s", url_path or "default", resp.get("error"))
+            logger.warning("Failed to save dashboard %s: %s", url_path or "default", resp.get("error"))
         return bool(resp.get("success"))
 
-    async def _storage_targets(self) -> List[Optional[str]]:
-        """Editierbare Dashboards: Standard (None) + alle Storage-Mode-Dashboards."""
-        targets: List[Optional[str]] = [None]
-        for d in await self.list_dashboards():
-            if d.get("mode") == "storage" and d.get("url_path"):
-                targets.append(d.get("url_path"))
+    async def _dashboard_targets(self) -> List[Tuple[Optional[str], Optional[str]]]:
+        """Return the default and every registered dashboard with its reported mode."""
+        targets: List[Tuple[Optional[str], Optional[str]]] = [(None, None)]
+        seen = {None}
+        for dashboard in await self.list_dashboards():
+            url_path = dashboard.get("url_path")
+            if url_path and url_path not in seen:
+                targets.append((url_path, dashboard.get("mode")))
+                seen.add(url_path)
         return targets
 
     async def _all_targets(self) -> List[Optional[str]]:
@@ -101,14 +105,29 @@ class LovelaceUpdater:
     async def update_all_dashboards(self, old_entity_id: str, new_entity_id: str) -> List[str]:
         """Ersetzt old->new in allen Storage-Dashboards. Gibt geänderte url_paths zurück."""
         changed: List[str] = []
-        for url_path in await self._storage_targets():
+        for url_path, mode in await self._dashboard_targets():
             try:
                 config = await self.get_config(url_path)
                 if not isinstance(config, dict):
-                    continue  # YAML-Mode / leer / nicht editierbar
-                if replace_entity_in_obj(config, old_entity_id, new_entity_id):
-                    if await self.save_config(url_path, config):
-                        changed.append(url_path or "default")
+                    continue
+                if old_entity_id not in extract_entity_ids(config):
+                    continue
+                if mode == "yaml":
+                    logger.info("Dashboard %s is YAML-managed and requires a manual update", url_path)
+                    continue
+                if not replace_entity_in_obj(config, old_entity_id, new_entity_id, replace_embedded=True):
+                    logger.warning("Could not replace %s in dashboard %s", old_entity_id, url_path or "default")
+                    continue
+                if not await self.save_config(url_path, config):
+                    continue
+
+                saved_config = await self.get_config(url_path)
+                if isinstance(saved_config, dict) and old_entity_id not in extract_entity_ids(saved_config):
+                    changed.append(url_path or "default")
+                else:
+                    logger.warning(
+                        "Dashboard %s still references %s after saving", url_path or "default", old_entity_id
+                    )
             except Exception as e:  # noqa: BLE001 - ein Dashboard darf den Rest nicht stoppen
                 logger.warning("Dashboard %s update failed: %s", url_path or "default", e)
         return changed

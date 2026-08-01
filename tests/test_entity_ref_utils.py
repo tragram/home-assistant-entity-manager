@@ -41,6 +41,23 @@ def test_plain_freetext_is_untouched():
     assert result == ("The sensor.temp is warm", False)
 
 
+def test_embedded_dashboard_reference_can_be_replaced():
+    value = "[[[ return states['sensor.temp'].state; ]]]"
+    updated, changed = replace_entity_ref_in_string(
+        value,
+        "sensor.temp",
+        "sensor.x",
+        replace_embedded=True,
+    )
+    assert changed
+    assert "states['sensor.x']" in updated
+
+
+def test_embedded_replacement_respects_entity_id_boundaries():
+    value = "sensor.temperature"
+    assert replace_entity_ref_in_string(value, "sensor.temp", "sensor.x", replace_embedded=True) == (value, False)
+
+
 def test_replace_in_obj_nested_in_place():
     data = {"a": "light.old", "b": ["x", "light.old"], "c": {"d": "light.old"}}
     changed = replace_entity_in_obj(data, "light.old", "light.new")
