@@ -37,6 +37,7 @@ from lovelace_updater import LovelaceUpdater
 from naming_overrides import NamingOverrides
 from naming_templates import NamingTemplateError, NamingTemplates
 from reference_checker import ReferenceChecker
+from reference_updater import ReferenceUpdater
 from rename_log import RenameLog
 from type_mappings import TypeMappings
 
@@ -1090,6 +1091,7 @@ async def _execute_changes_async():
         "failed": [],
         "skipped": [],
         "dependency_warnings": [],
+        "dashboard_manual_updates": [],
         "device_success": [],
         "device_failed": [],
     }
@@ -1105,6 +1107,7 @@ async def _execute_changes_async():
         base_url = os.getenv("HA_URL")
         token = os.getenv("HA_TOKEN")
         dependency_updater = DependencyUpdater(base_url, token)
+        reference_updater = ReferenceUpdater(dependency_updater, LovelaceUpdater(ws))
 
         # Pre-fetch states once for all dependency updates (performance optimization)
         logger.info("Pre-fetching states for dependency updates...")
@@ -1178,9 +1181,10 @@ async def _execute_changes_async():
                                     logger.info(f"Enabled and renamed disabled entity: {entity_id} -> {new_entity_id}")
 
                                 # Update dependencies
-                                dep_results = await dependency_updater.update_all_dependencies(
+                                reference_results = await reference_updater.update_all(
                                     entity_id, new_entity_id, cached_states
                                 )
+                                results["dashboard_manual_updates"].extend(reference_results["dashboards"]["manual"])
 
                                 results["success"].append(
                                     {
@@ -1259,10 +1263,9 @@ async def _execute_changes_async():
                     # Update dependencies only on ID change
                     if needs_id_change:
                         try:
-                            logger.info(f"Updating dependencies for: {old_id} -> {new_id}")
-                            dep_results = await dependency_updater.update_all_dependencies(
-                                old_id, new_id, cached_states
-                            )
+                            logger.info(f"Updating references for: {old_id} -> {new_id}")
+                            reference_results = await reference_updater.update_all(old_id, new_id, cached_states)
+                            dep_results = reference_results["dependencies"]
 
                             # Erstelle Success Entry
                             success_entry = {
@@ -1279,6 +1282,9 @@ async def _execute_changes_async():
                                     "automations": len(dep_results["automations"]["success"]),
                                     "total": dep_results["total_success"],
                                 }
+
+                            success_entry["dashboards_updated"] = reference_results["dashboards"]["updated"]
+                            results["dashboard_manual_updates"].extend(reference_results["dashboards"]["manual"])
 
                             results["success"].append(success_entry)
 
@@ -1364,8 +1370,8 @@ async def execute_direct_handler(job, ctx):
 
     Runs inside the worker (serial, off the request path). Renames each entity
     (id + friendly name), enables disabled ones when configured, and rewrites
-    references in automations/scenes/scripts. Returns the same result shape the
-    endpoint used to return so the UI summary is unchanged.
+    references in automations, scenes, scripts, and storage dashboards. YAML
+    dashboard references are returned for manual editing.
     """
     entities = job["payload"]["entities"]
 
@@ -1378,6 +1384,7 @@ async def execute_direct_handler(job, ctx):
         "failed": [],
         "skipped": [],
         "dependency_warnings": [],
+        "dashboard_manual_updates": [],
     }
 
     ws = HomeAssistantWebSocket(ws_url, token)
@@ -1386,6 +1393,7 @@ async def execute_direct_handler(job, ctx):
     try:
         entity_registry = EntityRegistry(ws)
         dependency_updater = DependencyUpdater(base_url, token)
+        reference_updater = ReferenceUpdater(dependency_updater, LovelaceUpdater(ws))
 
         # Pre-fetch states once for all dependency updates (performance optimization)
         logger.info("Pre-fetching states for dependency updates...")
@@ -1428,14 +1436,24 @@ async def execute_direct_handler(job, ctx):
                 should_enable = is_disabled and os.getenv("ENABLE_DISABLED_ENTITIES", "false").lower() == "true"
 
                 # Rename entity
-                await entity_registry.rename_entity(old_id, new_id, friendly_name, enable=should_enable)
+                await entity_registry.rename_entity(
+                    old_id,
+                    None if id_unchanged else new_id,
+                    friendly_name,
+                    enable=should_enable,
+                )
 
                 if should_enable:
                     logger.info(f"Enabled and renamed disabled entity: {old_id} -> {new_id}")
 
-                # Update dependencies (automations, scenes, scripts)
-                dep_results = await dependency_updater.update_all_dependencies(old_id, new_id, cached_states)
-                if dep_results.get("total_failed", 0) > 0:
+                # Update configuration and dashboard references after an ID change.
+                reference_results = None
+                if not id_unchanged:
+                    reference_results = await reference_updater.update_all(old_id, new_id, cached_states)
+                    results["dashboard_manual_updates"].extend(reference_results["dashboards"]["manual"])
+
+                dep_results = reference_results["dependencies"] if reference_results else None
+                if dep_results and dep_results.get("total_failed", 0) > 0:
                     # Collect all failed updates from scenes, scripts, automations
                     failed_updates = (
                         dep_results.get("scenes", {}).get("failed", [])
@@ -2346,13 +2364,16 @@ async def _rename_entity_async():
                     "new_friendly_name": new_friendly_name,
                 }
 
-                # Update dependencies (automations, scenes, scripts) if entity ID changed
+                # Update all editable references if the entity ID changed.
                 if id_changed:
                     try:
-                        dependency_updater = DependencyUpdater(base_url, token)
-                        dep_results = await dependency_updater.update_all_dependencies(old_entity_id, new_entity_id)
+                        reference_updater = ReferenceUpdater(
+                            DependencyUpdater(base_url, token),
+                            LovelaceUpdater(ws),
+                        )
+                        reference_results = await reference_updater.update_all(old_entity_id, new_entity_id)
+                        dep_results = reference_results["dependencies"]
 
-                        # Always include dependency results for debugging
                         response_data["dependencies_checked"] = True
                         response_data["dependencies_updated"] = {
                             "total": dep_results["total_success"],
@@ -2360,6 +2381,8 @@ async def _rename_entity_async():
                             "scripts": dep_results["scripts"]["success"],
                             "automations": dep_results["automations"]["success"],
                         }
+                        response_data["dashboards_updated"] = reference_results["dashboards"]["updated"]
+                        response_data["dashboard_manual_updates"] = reference_results["dashboards"]["manual"]
 
                         if dep_results["total_success"] > 0:
                             logger.info(f"Updated {dep_results['total_success']} dependencies for {old_entity_id}")
@@ -2485,9 +2508,10 @@ async def rename_device_handler(job, ctx):
     """Rename a device and cascade the rename to all of its entities.
 
     Renames the device, aligns the Z2M friendly name, then for every entity of
-    the device rebuilds its friendly name and entity id and rewrites references
-    in automations/scenes/scripts. Progress is reported per entity so the UI can
-    show a live bar. Runs inside the worker (serial, off the request path).
+    the device rebuilds its friendly name and entity ID and rewrites references
+    in automations, scenes, scripts, and storage dashboards. Progress is reported
+    per entity so the UI can show a live bar. YAML dashboards are reported for
+    manual editing.
     """
     payload = job["payload"]
     device_id = payload["device_id"]
@@ -2526,6 +2550,8 @@ async def rename_device_handler(job, ctx):
         entities_failed = 0
         entities_skipped = 0
         dependencies_updated = 0
+        dashboards_updated = set()
+        dashboard_manual_updates = []
 
         logger.info("=== Starting entity rename after device rename ===")
         logger.info(f"Device ID: {device_id}")
@@ -2534,8 +2560,9 @@ async def rename_device_handler(job, ctx):
 
         entity_registry = EntityRegistry(ws)
 
-        # Initialize dependency updater
+        # Initialize reference updaters and cache states shared by every entity.
         dependency_updater = DependencyUpdater(base_url, token)
+        reference_updater = ReferenceUpdater(dependency_updater, LovelaceUpdater(ws))
         cached_states = await dependency_updater.get_states()
 
         # Get area name for this device
@@ -2624,13 +2651,14 @@ async def rename_device_handler(job, ctx):
                 logger.info("  SUCCESS: Renamed entity")
                 ctx.log("RENAME", f"{old_entity_id} -> {new_entity_id}")
 
-                # Update dependencies if ID changed
+                # Update configuration and dashboard references if the ID changed.
                 if id_changed:
-                    dep_results = await dependency_updater.update_all_dependencies(
-                        old_entity_id, new_entity_id, cached_states
-                    )
+                    reference_results = await reference_updater.update_all(old_entity_id, new_entity_id, cached_states)
+                    dep_results = reference_results["dependencies"]
                     dep_count = dep_results.get("total_success", 0)
                     dependencies_updated += dep_count
+                    dashboards_updated.update(reference_results["dashboards"]["updated"])
+                    dashboard_manual_updates.extend(reference_results["dashboards"]["manual"])
                     if dep_count > 0:
                         logger.info(f"  Updated {dep_count} dependencies")
 
@@ -2666,6 +2694,8 @@ async def rename_device_handler(job, ctx):
             "entities_updated": entities_updated,
             "entities_failed": entities_failed,
             "dependencies_updated": dependencies_updated,
+            "dashboards_updated": sorted(dashboards_updated),
+            "dashboard_manual_updates": dashboard_manual_updates,
             "z2m_synced": z2m_sync.get("synced"),
             "z2m_failed": (z2m_sync.get("error") if z2m_sync.get("supported") and not z2m_sync.get("synced") else None),
         }

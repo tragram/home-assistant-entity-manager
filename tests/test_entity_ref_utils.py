@@ -28,6 +28,13 @@ def test_template_match():
     assert "sensor.temp'" not in value
 
 
+def test_template_statement_match():
+    value = "{% set source = states('sensor.temp') %}{{ source }}"
+    updated, changed = replace_entity_ref_in_string(value, "sensor.temp", "sensor.x")
+    assert changed
+    assert "states('sensor.x')" in updated
+
+
 def test_plain_freetext_is_untouched():
     # Not a template -> leave plain text alone even if the id appears as a substring
     result = replace_entity_ref_in_string("The sensor.temp is warm", "sensor.temp", "sensor.x")
@@ -45,6 +52,18 @@ def test_replace_in_obj_no_change():
     data = {"a": "light.other"}
     assert replace_entity_in_obj(data, "light.old", "light.new") is False
     assert data == {"a": "light.other"}
+
+
+def test_replace_in_obj_updates_entity_id_keys():
+    data = {"entities": {"light.old": {"state": "on"}}}
+    assert replace_entity_in_obj(data, "light.old", "light.new") is True
+    assert data == {"entities": {"light.new": {"state": "on"}}}
+
+
+def test_replace_same_entity_id_is_no_op():
+    data = {"entity": "light.same"}
+    assert replace_entity_in_obj(data, "light.same", "light.same") is False
+    assert data == {"entity": "light.same"}
 
 
 def test_extract_entity_ids_from_dashboard_like_structure():

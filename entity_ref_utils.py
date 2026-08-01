@@ -55,6 +55,9 @@ def replace_entity_ref_in_string(value: str, old_entity_id: str, new_entity_id: 
     Returns:
         Tupel (neuer_string, wurde_geaendert).
     """
+    if old_entity_id == new_entity_id:
+        return value, False
+
     # Exakter Wert (z.B. entity_id: "light.kueche")
     if value == old_entity_id:
         return new_entity_id, True
@@ -62,7 +65,8 @@ def replace_entity_ref_in_string(value: str, old_entity_id: str, new_entity_id: 
     # Templates: Entity-ID kann als Teil eines Jinja-Ausdrucks vorkommen.
     # Nur mit Wortgrenzen ersetzen, damit `sensor.temp` nicht in
     # `sensor.temperature` trifft.
-    if "{{" in value and "}}" in value and old_entity_id in value:
+    has_jinja = ("{{" in value and "}}" in value) or ("{%" in value and "%}" in value)
+    if has_jinja and old_entity_id in value:
         pattern = r"\b" + re.escape(old_entity_id) + r"\b"
         new_value = re.sub(pattern, new_entity_id, value)
         if new_value != value:
@@ -84,10 +88,18 @@ def replace_entity_in_obj(data: Any, old_entity_id: str, new_entity_id: str) -> 
     Returns:
         True, wenn irgendwo etwas geaendert wurde.
     """
+    if old_entity_id == new_entity_id:
+        return False
+
     changed = False
 
     if isinstance(data, dict):
-        for key, value in data.items():
+        # Scene configs store entity IDs as keys in their ``entities`` mapping.
+        if old_entity_id in data:
+            data[new_entity_id] = data.pop(old_entity_id)
+            changed = True
+
+        for key, value in list(data.items()):
             if isinstance(value, str):
                 new_value, did_change = replace_entity_ref_in_string(value, old_entity_id, new_entity_id)
                 if did_change:
