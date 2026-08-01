@@ -50,3 +50,31 @@ def test_job_get_and_list(client):
     assert c.get("/api/jobs/does-not-exist").status_code == 404
     listing = c.get("/api/jobs").get_json()["jobs"]
     assert [j["job_id"] for j in listing] == [jid]
+
+
+def test_device_rename_plan_uses_shared_naming_generator() -> None:
+    """Device renames preserve distinct names through the shared generator."""
+
+    class FakeRestructurer:
+        """Generate deterministic IDs from native entity names."""
+
+        entities = {
+            "event.old_left": {"device_id": "dev1"},
+            "event.old_right": {"device_id": "dev1"},
+            "sensor.unrelated": {"device_id": "dev2"},
+        }
+
+        def generate_new_entity_id(self, entity_id: str, state: dict) -> tuple[str, str]:
+            """Return an ID containing the entity's distinct native name."""
+            suffix = state["attributes"]["native_name"].lower().replace(" ", "_")
+            return f"event.hall_wall_switch_{suffix}", state["attributes"]["native_name"]
+
+    states = [
+        {"entity_id": "event.old_left", "attributes": {"native_name": "Button Left"}},
+        {"entity_id": "event.old_right", "attributes": {"native_name": "Button Right"}},
+    ]
+
+    assert web_ui._plan_device_entity_changes(FakeRestructurer(), "dev1", states) == [
+        ("event.old_left", "event.hall_wall_switch_button_left", "Button Left"),
+        ("event.old_right", "event.hall_wall_switch_button_right", "Button Right"),
+    ]
