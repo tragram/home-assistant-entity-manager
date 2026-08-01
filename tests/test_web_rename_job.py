@@ -5,6 +5,8 @@ These verify that the request thread validates, sanitizes and enqueues the job
 touching Home Assistant. The worker is not started, so enqueued jobs stay queued.
 """
 
+import asyncio
+
 import pytest
 
 from jobs import TERMINAL_STATES, JobStore, JobWorker
@@ -78,3 +80,13 @@ def test_device_rename_plan_uses_shared_naming_generator() -> None:
         ("event.old_left", "event.hall_wall_switch_button_left", "Button Left"),
         ("event.old_right", "event.hall_wall_switch_button_right", "Button Right"),
     ]
+
+
+def test_init_client_recreates_missing_restructurer(monkeypatch) -> None:
+    """A worker can restore the restructurer when the REST client already exists."""
+    client = object()
+    monkeypatch.setitem(web_ui.renamer_state, "client", client)
+    monkeypatch.setitem(web_ui.renamer_state, "restructurer", None)
+
+    assert asyncio.run(web_ui.init_client()) is client
+    assert web_ui.renamer_state["restructurer"].client is client
