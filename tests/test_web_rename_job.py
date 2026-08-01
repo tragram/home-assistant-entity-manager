@@ -66,10 +66,16 @@ def test_device_rename_plan_uses_shared_naming_generator() -> None:
             "sensor.unrelated": {"device_id": "dev2"},
         }
 
-        def generate_new_entity_id(self, entity_id: str, state: dict) -> tuple[str, str]:
+        def generate_new_entity_id(
+            self,
+            entity_id: str,
+            state: dict,
+            entity_name: str | None = None,
+        ) -> tuple[str, str]:
             """Return an ID containing the entity's distinct native name."""
-            suffix = state["attributes"]["native_name"].lower().replace(" ", "_")
-            return f"event.hall_wall_switch_{suffix}", state["attributes"]["native_name"]
+            name = entity_name or state["attributes"]["native_name"]
+            suffix = name.lower().replace(" ", "_")
+            return f"event.hall_wall_switch_{suffix}", name
 
     states = [
         {"entity_id": "event.old_left", "attributes": {"native_name": "Button Left"}},
@@ -79,6 +85,45 @@ def test_device_rename_plan_uses_shared_naming_generator() -> None:
     assert web_ui._plan_device_entity_changes(FakeRestructurer(), "dev1", states) == [
         ("event.old_left", "event.hall_wall_switch_button_left", "Button Left"),
         ("event.old_right", "event.hall_wall_switch_button_right", "Button Right"),
+    ]
+
+
+def test_device_rename_preserves_names_captured_before_device_change() -> None:
+    """Same-domain entities remain distinct after their device name changes."""
+
+    class FakeRestructurer:
+        """Model naming context before and after a device rename."""
+
+        entities = {
+            "sensor.kitchen_sofa_energy": {"device_id": "dev1"},
+            "sensor.kitchen_sofa_voltage": {"device_id": "dev1"},
+        }
+
+        def build_naming_context(self, entity_id: str, state: dict) -> dict[str, str]:
+            """Extract the entity part while the old device name is known."""
+            return {"entity": entity_id.rsplit("_", 1)[-1].title()}
+
+        def generate_new_entity_id(
+            self,
+            entity_id: str,
+            state: dict,
+            entity_name: str | None = None,
+        ) -> tuple[str, str]:
+            """Generate an ID using the preserved entity-specific name."""
+            suffix = (entity_name or "").lower().replace(" ", "_")
+            return f"sensor.kitchen_sofa1_{suffix}", entity_name or ""
+
+    restructurer = FakeRestructurer()
+    states = [
+        {"entity_id": "sensor.kitchen_sofa_energy", "attributes": {"friendly_name": "Kitchen Sofa Energy"}},
+        {"entity_id": "sensor.kitchen_sofa_voltage", "attributes": {"friendly_name": "Kitchen Sofa Voltage"}},
+    ]
+
+    names = web_ui._capture_device_entity_names(restructurer, "dev1", states)
+
+    assert web_ui._plan_device_entity_changes(restructurer, "dev1", states, names) == [
+        ("sensor.kitchen_sofa_energy", "sensor.kitchen_sofa1_energy", "Energy"),
+        ("sensor.kitchen_sofa_voltage", "sensor.kitchen_sofa1_voltage", "Voltage"),
     ]
 
 

@@ -2510,9 +2510,11 @@ def _plan_device_entity_changes(
     restructurer: EntityRestructurer,
     device_id: str,
     states: list[dict[str, Any]],
+    preserved_entity_names: Optional[dict[str, str]] = None,
 ) -> list[tuple[str, str, str]]:
     """Generate template-based entity changes for a renamed device."""
     states_by_id = {state["entity_id"]: state for state in states}
+    preserved_entity_names = preserved_entity_names or {}
     changes = []
     for entity_id, entity_info in restructurer.entities.items():
         if entity_info.get("device_id") != device_id:
@@ -2520,9 +2522,24 @@ def _plan_device_entity_changes(
         new_entity_id, new_friendly_name = restructurer.generate_new_entity_id(
             entity_id,
             states_by_id.get(entity_id, {}),
+            preserved_entity_names.get(entity_id),
         )
         changes.append((entity_id, new_entity_id, new_friendly_name))
     return changes
+
+
+def _capture_device_entity_names(
+    restructurer: EntityRestructurer,
+    device_id: str,
+    states: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Capture entity-specific names before changing their device name."""
+    states_by_id = {state["entity_id"]: state for state in states}
+    return {
+        entity_id: restructurer.build_naming_context(entity_id, states_by_id.get(entity_id, {}))["entity"]
+        for entity_id, entity_info in restructurer.entities.items()
+        if entity_info.get("device_id") == device_id
+    }
 
 
 async def rename_device_handler(job, ctx):
@@ -2549,6 +2566,17 @@ async def rename_device_handler(job, ctx):
         # Ensure restructurer is loaded
         await init_client()
         await renamer_state["restructurer"].load_structure(ws)
+
+        # Capture entity-specific names while the old device name can still be
+        # removed from friendly names and entity IDs unambiguously.
+        dependency_updater = DependencyUpdater(base_url, token)
+        reference_updater = ReferenceUpdater(dependency_updater, LovelaceUpdater(ws))
+        cached_states = await dependency_updater.get_states()
+        preserved_entity_names = _capture_device_entity_names(
+            renamer_state["restructurer"],
+            device_id,
+            cached_states,
+        )
 
         device_registry = DeviceRegistry(ws)
         success = await device_registry.rename_device(device_id, new_name)
@@ -2578,15 +2606,11 @@ async def rename_device_handler(job, ctx):
 
         entity_registry = EntityRegistry(ws)
 
-        # Initialize reference updaters and cache states shared by every entity.
-        dependency_updater = DependencyUpdater(base_url, token)
-        reference_updater = ReferenceUpdater(dependency_updater, LovelaceUpdater(ws))
-        cached_states = await dependency_updater.get_states()
-
         entity_changes = _plan_device_entity_changes(
             renamer_state["restructurer"],
             device_id,
             cached_states,
+            preserved_entity_names,
         )
 
         total = len(entity_changes)
