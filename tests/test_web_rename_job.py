@@ -38,11 +38,20 @@ def test_rename_device_missing_field_is_400(client):
     assert resp.status_code == 400
 
 
-def test_rename_device_duplicate_device_is_409(client):
+def test_rename_device_duplicate_job_is_409(client):
+    """Only concurrent jobs for the same device are rejected."""
     c, _ = client
     assert c.post("/api/rename_device", json={"device_id": "dev1", "new_name": "A"}).status_code == 202
     dup = c.post("/api/rename_device", json={"device_id": "dev1", "new_name": "B"})
     assert dup.status_code == 409
+
+
+def test_rename_devices_may_share_display_name(client):
+    """HA permits separate devices to use the same display name."""
+    c, _ = client
+
+    assert c.post("/api/rename_device", json={"device_id": "dev1", "new_name": "Lamp"}).status_code == 202
+    assert c.post("/api/rename_device", json={"device_id": "dev2", "new_name": "Lamp"}).status_code == 202
 
 
 def test_job_get_and_list(client):

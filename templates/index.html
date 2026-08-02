@@ -1757,15 +1757,11 @@
                         <button @click="renameDeviceInHA($refs.deviceNameInput.value)"
                                 class="btn btn-sm"
                                 style="background: #10b981; color: white;"
-                                :disabled="renamingDevice || applyingEntityId || executing || isDeviceNameTaken(selectedDeviceData)"
-                                :class="{'opacity-50 cursor-not-allowed': renamingDevice || applyingEntityId || executing || isDeviceNameTaken(selectedDeviceData)}"
-                                :title="isDeviceNameTaken(selectedDeviceData) ? t('device.name_conflict') : ''">
+                                :disabled="renamingDevice || applyingEntityId || executing"
+                                :class="{'opacity-50 cursor-not-allowed': renamingDevice || applyingEntityId || executing}">
                             <i class="ri-check-line"></i>
                         </button>
                     </div>
-                    <span x-show="isDeviceNameTaken(selectedDeviceData)" class="text-red-500 text-xs mt-1 block">
-                        <i class="ri-error-warning-line"></i> <span x-text="t('device.name_conflict')">A device with this name already exists</span>
-                    </span>
                     <!-- Z2M-Namens-Drift: Z2M-friendly_name weicht vom HA-Namen ab -->
                     <div x-show="selectedDeviceData?.z2m_drift" class="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
                         <div class="flex items-center justify-between gap-2">
@@ -4095,14 +4091,6 @@
                     return device.name !== expectedName;
                 },
 
-                // Check if the target device name is already taken by another device
-                isDeviceNameTaken(device) {
-                    if (!device) return false;
-                    const newName = this.getExpectedDeviceName(device);
-                    if (!newName || newName === device.name) return false; // No change, no conflict
-                    return this.hierarchy.devices.some(d => d.id !== device.id && d.name === newName);
-                },
-
                 deviceNeedsRename(device) {
                     // Check if device name needs rename
                     if (this.deviceNameNeedsRename(device)) {
@@ -4921,12 +4909,6 @@
 
                     if (this.selectedDeviceData.name === newFullName) {
                         this.showMessage('Device name already correct', 'info');
-                        return;
-                    }
-
-                    // Prevent renaming to a name that another device already uses
-                    if (this.hierarchy.devices.some(d => d.id !== this.selectedDevice && d.name === newFullName)) {
-                        this.showMessage(this.t('device.name_conflict'), 'error');
                         return;
                     }
 
