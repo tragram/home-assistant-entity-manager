@@ -1404,6 +1404,7 @@ async def execute_direct_handler(job, ctx):
 
         total = len(entities)
         ctx.progress(0, total)
+        dashboard_renames = []
 
         for index, entity_data in enumerate(entities):
             old_id = entity_data.get("old_id")
@@ -1449,12 +1450,11 @@ async def execute_direct_handler(job, ctx):
                     logger.info(f"Enabled and renamed disabled entity: {old_id} -> {new_id}")
 
                 # Update configuration and dashboard references after an ID change.
-                reference_results = None
+                dep_results = None
                 if not id_unchanged:
-                    reference_results = await reference_updater.update_all(old_id, new_id, cached_states)
-                    results["dashboard_manual_updates"].extend(reference_results["dashboards"]["manual"])
+                    dep_results = await dependency_updater.update_all_dependencies(old_id, new_id, cached_states)
+                    dashboard_renames.append((old_id, new_id))
 
-                dep_results = reference_results["dependencies"] if reference_results else None
                 if dep_results and dep_results.get("total_failed", 0) > 0:
                     # Collect all failed updates from scenes, scripts, automations
                     failed_updates = (
@@ -1482,6 +1482,11 @@ async def execute_direct_handler(job, ctx):
                 ctx.log("ERROR", f"{old_id}: {e}")
 
             ctx.progress(index + 1, total, current=old_id)
+
+        if dashboard_renames:
+            dashboard_results = await reference_updater.update_dashboards(dashboard_renames)
+            results["dashboards_updated"] = dashboard_results["updated"]
+            results["dashboard_manual_updates"].extend(dashboard_results["manual"])
 
     finally:
         await ws.disconnect()
@@ -2600,6 +2605,7 @@ async def rename_device_handler(job, ctx):
         dependencies_updated = 0
         dashboards_updated = set()
         dashboard_manual_updates = []
+        dashboard_renames = []
 
         logger.info("=== Starting entity rename after device rename ===")
         logger.info(f"Device ID: {device_id}")
@@ -2643,12 +2649,14 @@ async def rename_device_handler(job, ctx):
 
                 # Update configuration and dashboard references if the ID changed.
                 if id_changed:
-                    reference_results = await reference_updater.update_all(old_entity_id, new_entity_id, cached_states)
-                    dep_results = reference_results["dependencies"]
+                    dep_results = await dependency_updater.update_all_dependencies(
+                        old_entity_id,
+                        new_entity_id,
+                        cached_states,
+                    )
                     dep_count = dep_results.get("total_success", 0)
                     dependencies_updated += dep_count
-                    dashboards_updated.update(reference_results["dashboards"]["updated"])
-                    dashboard_manual_updates.extend(reference_results["dashboards"]["manual"])
+                    dashboard_renames.append((old_entity_id, new_entity_id))
                     if dep_count > 0:
                         logger.info(f"  Updated {dep_count} dependencies")
 
@@ -2666,6 +2674,11 @@ async def rename_device_handler(job, ctx):
 
             processed += 1
             ctx.progress(processed, total, current=old_entity_id)
+
+        if dashboard_renames:
+            dashboard_results = await reference_updater.update_dashboards(dashboard_renames)
+            dashboards_updated.update(dashboard_results["updated"])
+            dashboard_manual_updates.extend(dashboard_results["manual"])
 
         # Reload structure to reflect changes
         await renamer_state["restructurer"].load_structure(ws)

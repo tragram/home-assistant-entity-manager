@@ -1,6 +1,6 @@
 """Coordinate entity reference updates across Home Assistant configuration."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from dependency_updater import DependencyUpdater
 from lovelace_updater import LovelaceUpdater
@@ -26,13 +26,15 @@ class ReferenceUpdater:
             new_entity_id,
             cached_states,
         )
-        dashboards = await self.lovelace.update_all_dashboards(old_entity_id, new_entity_id)
-        manual_dashboards = await self.lovelace.scan_renames([(old_entity_id, new_entity_id)])
+        dashboard_results = await self.update_dashboards([(old_entity_id, new_entity_id)])
 
         return {
             "dependencies": dependencies,
-            "dashboards": {
-                "updated": dashboards,
-                "manual": manual_dashboards,
-            },
+            "dashboards": dashboard_results,
         }
+
+    async def update_dashboards(self, rename_pairs: List[Tuple[str, str]]) -> Dict[str, Any]:
+        """Apply a complete rename batch to each dashboard atomically."""
+        dashboards = await self.lovelace.update_dashboard_renames(rename_pairs)
+        manual_dashboards = await self.lovelace.scan_renames(rename_pairs)
+        return {"updated": dashboards, "manual": manual_dashboards}

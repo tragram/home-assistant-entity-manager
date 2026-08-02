@@ -36,6 +36,11 @@ class FakeLovelace:
         self.calls.append(("update", old_entity_id, new_entity_id))
         return ["default"]
 
+    async def update_dashboard_renames(self, rename_pairs: List[Any]) -> List[str]:
+        """Record one atomic storage-dashboard update."""
+        self.calls.append(("update_batch", rename_pairs))
+        return ["default"]
+
     async def scan_renames(self, rename_pairs: List[Any]) -> List[Dict[str, str]]:
         """Record a dashboard scan and return one manual YAML update."""
         self.calls.append(("scan", rename_pairs))
@@ -56,3 +61,7 @@ def test_updates_dependencies_and_dashboards() -> None:
     assert result["dependencies"]["total_success"] == 1
     assert result["dashboards"]["updated"] == ["default"]
     assert result["dashboards"]["manual"] == [{"dashboard": "yaml", "old": "sensor.old", "new": "sensor.new"}]
+    assert lovelace.calls == [
+        ("update_batch", [("sensor.old", "sensor.new")]),
+        ("scan", [("sensor.old", "sensor.new")]),
+    ]

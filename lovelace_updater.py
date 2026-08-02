@@ -64,9 +64,13 @@ class LovelaceUpdater:
 
     async def _dashboard_targets(self) -> List[Tuple[Optional[str], Optional[str]]]:
         """Return the default and every registered dashboard with its reported mode."""
-        targets: List[Tuple[Optional[str], Optional[str]]] = [(None, None)]
-        seen = {None}
-        for dashboard in await self.list_dashboards():
+        dashboards = await self.list_dashboards()
+        # Current HA migrates the default dashboard to the ``lovelace`` URL.
+        # Omitting url_path aliases that dashboard, so do not process it twice.
+        has_named_default = any(dashboard.get("url_path") == "lovelace" for dashboard in dashboards)
+        targets: List[Tuple[Optional[str], Optional[str]]] = [] if has_named_default else [(None, None)]
+        seen = set()
+        for dashboard in dashboards:
             url_path = dashboard.get("url_path")
             if url_path and url_path not in seen:
                 targets.append((url_path, dashboard.get("mode")))
@@ -75,8 +79,10 @@ class LovelaceUpdater:
 
     async def _all_targets(self) -> List[Optional[str]]:
         """Alle Dashboards (Standard + benutzerdefiniert, inkl. YAML) - nur zum Lesen."""
-        targets: List[Optional[str]] = [None]
-        for d in await self.list_dashboards():
+        dashboards = await self.list_dashboards()
+        has_named_default = any(dashboard.get("url_path") == "lovelace" for dashboard in dashboards)
+        targets: List[Optional[str]] = [] if has_named_default else [None]
+        for d in dashboards:
             if d.get("url_path"):
                 targets.append(d.get("url_path"))
         return targets
@@ -103,6 +109,10 @@ class LovelaceUpdater:
         return results
 
     async def update_all_dashboards(self, old_entity_id: str, new_entity_id: str) -> List[str]:
+        """Replace one entity ID in every editable dashboard."""
+        return await self.update_dashboard_renames([(old_entity_id, new_entity_id)])
+
+    async def update_dashboard_renames(self, rename_pairs: List[Tuple[str, str]]) -> List[str]:
         """Ersetzt old->new in allen Storage-Dashboards. Gibt geänderte url_paths zurück."""
         changed: List[str] = []
         for url_path, mode in await self._dashboard_targets():
@@ -110,24 +120,23 @@ class LovelaceUpdater:
                 config = await self.get_config(url_path)
                 if not isinstance(config, dict):
                     continue
-                if old_entity_id not in extract_entity_ids(config):
+                present = extract_entity_ids(config)
+                applicable = [(old, new) for old, new in rename_pairs if old in present and old != new]
+                if not applicable:
                     continue
                 if mode == "yaml":
                     logger.info("Dashboard %s is YAML-managed and requires a manual update", url_path)
                     continue
-                if not replace_entity_in_obj(config, old_entity_id, new_entity_id, replace_embedded=True):
-                    logger.warning("Could not replace %s in dashboard %s", old_entity_id, url_path or "default")
+                replaced = False
+                for old_entity_id, new_entity_id in applicable:
+                    replaced |= replace_entity_in_obj(config, old_entity_id, new_entity_id, replace_embedded=True)
+                if not replaced:
+                    logger.warning("Could not replace entity references in dashboard %s", url_path or "default")
                     continue
                 if not await self.save_config(url_path, config):
                     continue
 
-                saved_config = await self.get_config(url_path)
-                if isinstance(saved_config, dict) and old_entity_id not in extract_entity_ids(saved_config):
-                    changed.append(url_path or "default")
-                else:
-                    logger.warning(
-                        "Dashboard %s still references %s after saving", url_path or "default", old_entity_id
-                    )
+                changed.append(url_path or "default")
             except Exception as e:  # noqa: BLE001 - ein Dashboard darf den Rest nicht stoppen
                 logger.warning("Dashboard %s update failed: %s", url_path or "default", e)
         return changed

@@ -15,6 +15,7 @@ class MockWS:
         self._yaml = set(yaml_paths or [])  # url_paths where save fails (yaml mode)
         self._id = 0
         self._queue = []
+        self.save_calls = []
 
     async def _send_message(self, msg):
         self._id += 1
@@ -22,10 +23,14 @@ class MockWS:
         if t == "lovelace/dashboards/list":
             self._queue.append({"id": self._id, "success": True, "result": self._dashboards})
         elif t == "lovelace/config":
-            cfg = self._cfgs.get(msg.get("url_path"))
+            url_path = msg.get("url_path")
+            if url_path is None and any(item.get("url_path") == "lovelace" for item in self._dashboards):
+                url_path = "lovelace"
+            cfg = self._cfgs.get(url_path)
             self._queue.append({"id": self._id, "success": True, "result": copy.deepcopy(cfg)})
         elif t == "lovelace/config/save":
             up = msg.get("url_path")
+            self.save_calls.append(up)
             if up in self._yaml or up is None and None in self._yaml:
                 self._queue.append({"id": self._id, "success": False, "error": "yaml mode"})
             else:
@@ -73,6 +78,28 @@ def test_update_dashboard_without_mode_metadata_and_embedded_reference():
 
     assert changed == ["custom-dashboard"]
     assert "sensor.new" in ws._cfgs["custom-dashboard"]["cards"][0]["value"]
+
+
+def test_batch_renames_save_each_dashboard_once():
+    """A multi-entity rename cannot overwrite an earlier dashboard change."""
+    ws = MockWS(
+        dashboards=[{"url_path": "lovelace", "mode": "storage"}],
+        configs={"lovelace": {"cards": [{"entities": ["sensor.old_energy", "sensor.old_voltage"]}]}},
+    )
+    updater = LovelaceUpdater(ws)
+
+    changed = _run(
+        updater.update_dashboard_renames(
+            [
+                ("sensor.old_energy", "sensor.new_energy"),
+                ("sensor.old_voltage", "sensor.new_voltage"),
+            ]
+        )
+    )
+
+    assert changed == ["lovelace"]
+    assert ws.save_calls == ["lovelace"]
+    assert ws._cfgs["lovelace"]["cards"][0]["entities"] == ["sensor.new_energy", "sensor.new_voltage"]
 
 
 def test_scan_renames_finds_yaml_only():
