@@ -1446,14 +1446,24 @@ async def execute_direct_handler(job, ctx):
                     enable=should_enable,
                 )
 
+                # Once HA accepts the entity ID change, its dashboard rewrite
+                # must no longer depend on automation/script update requests.
+                if not id_unchanged:
+                    dashboard_renames.append((old_id, new_id))
+
                 if should_enable:
                     logger.info(f"Enabled and renamed disabled entity: {old_id} -> {new_id}")
 
                 # Update configuration and dashboard references after an ID change.
                 dep_results = None
                 if not id_unchanged:
-                    dep_results = await dependency_updater.update_all_dependencies(old_id, new_id, cached_states)
-                    dashboard_renames.append((old_id, new_id))
+                    try:
+                        dep_results = await dependency_updater.update_all_dependencies(old_id, new_id, cached_states)
+                    except Exception as error:  # noqa: BLE001 - the entity rename itself succeeded
+                        logger.warning("Reference update failed for %s -> %s: %s", old_id, new_id, error)
+                        results["dependency_warnings"].append(
+                            {"entity_id": old_id, "new_id": new_id, "error": str(error)}
+                        )
 
                 if dep_results and dep_results.get("total_failed", 0) > 0:
                     # Collect all failed updates from scenes, scripts, automations
@@ -2647,18 +2657,28 @@ async def rename_device_handler(job, ctx):
                 logger.info("  SUCCESS: Renamed entity")
                 ctx.log("RENAME", f"{old_entity_id} -> {new_entity_id}")
 
-                # Update configuration and dashboard references if the ID changed.
+                # Queue the dashboard rewrite as soon as HA accepts the ID
+                # change. Dependency failures must not discard this pair.
                 if id_changed:
-                    dep_results = await dependency_updater.update_all_dependencies(
-                        old_entity_id,
-                        new_entity_id,
-                        cached_states,
-                    )
-                    dep_count = dep_results.get("total_success", 0)
-                    dependencies_updated += dep_count
                     dashboard_renames.append((old_entity_id, new_entity_id))
-                    if dep_count > 0:
-                        logger.info(f"  Updated {dep_count} dependencies")
+                    try:
+                        dep_results = await dependency_updater.update_all_dependencies(
+                            old_entity_id,
+                            new_entity_id,
+                            cached_states,
+                        )
+                        dep_count = dep_results.get("total_success", 0)
+                        dependencies_updated += dep_count
+                        if dep_count > 0:
+                            logger.info(f"  Updated {dep_count} dependencies")
+                    except Exception as error:  # noqa: BLE001 - the entity rename itself succeeded
+                        logger.warning(
+                            "Reference update failed for %s -> %s: %s",
+                            old_entity_id,
+                            new_entity_id,
+                            error,
+                        )
+                        ctx.log("WARNING", f"References for {old_entity_id}: {error}")
 
             except Exception as error:
                 entities_failed += 1
