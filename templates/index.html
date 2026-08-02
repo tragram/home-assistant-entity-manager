@@ -2006,7 +2006,7 @@
 
                                         <template x-if="selectedArea !== '__no_area__' && entityNeedsRename(entity)">
                                             <div class="new-state">
-                                                <div class="friendly-name" x-text="entity._previewName || getEntityFriendlyName(entity)"></div>
+                                                <div class="friendly-name" x-text="entity._previewName ?? getEntityFriendlyName(entity)"></div>
                                                 <code class="entity-id" x-text="entity._previewId || getNewEntityId(entity)"></code>
                                             </div>
                                         </template>
@@ -3909,7 +3909,7 @@
                     }
 
                     // Use cached preview values (computed once in precomputeEntityPreviews)
-                    const newName = entity._previewName || this.getEntityFriendlyNameForEntity(entity);
+                    const newName = entity._previewName ?? this.getEntityFriendlyNameForEntity(entity);
                     const newId = entity._previewId || this.getNewEntityIdForEntity(entity);
 
                     return entity.id !== newId || entity.original_name !== newName;
@@ -3917,7 +3917,8 @@
 
                 // Get friendly name using entity's own device/area (not selected)
                 getEntityFriendlyNameForEntity(entity) {
-                    if (entity.suggested_name && entity._currentSuffix === undefined) {
+                    if (entity.suggested_name !== null && entity.suggested_name !== undefined &&
+                        entity._currentSuffix === undefined) {
                         return entity.suggested_name;
                     }
                     const parts = [];
@@ -3962,11 +3963,11 @@
                     const pending = [];
                     for (const entity of this.hierarchy.entities) {
                         // Skip if already computed (e.g. from user edit) or just renamed
-                        if (entity._previewName || entity._justRenamed) continue;
+                        if ((entity._previewName !== null && entity._previewName !== undefined) || entity._justRenamed) continue;
 
                         // Friendly-name composition stays client-side; only the slug comes
                         // from the backend (source of truth).
-                        entity._previewName = entity.suggested_name || this.getEntityFriendlyNameForEntity(entity);
+                        entity._previewName = entity.suggested_name ?? this.getEntityFriendlyNameForEntity(entity);
                         if (entity.suggested_entity_id) {
                             entity._previewId = entity.suggested_entity_id;
                             continue;
@@ -4310,7 +4311,7 @@
 
                     // Use preview values if available (from expanded edit), otherwise calculate using entity's own context
                     const newId = entity._previewId || this.getNewEntityIdForEntity(entity);
-                    const newName = entity._previewName || this.getEntityFriendlyNameForEntity(entity);
+                    const newName = entity._previewName ?? this.getEntityFriendlyNameForEntity(entity);
                     const idChanged = entity.id !== newId;
                     const nameChanged = entity.original_name !== newName;
 
@@ -4408,6 +4409,9 @@
                         return userMapping;
                     }
                     const baseName = entity.base_name || '';
+                    if (!baseName && entity.has_entity_name) {
+                        return '';
+                    }
                     if (!baseName || baseName.toLowerCase() === domain) {
                         return this.getTypeMappingSuggestion(entity);
                     }
@@ -5036,7 +5040,7 @@
                     const allEntities = entitiesToChange.map(e => ({
                         old_id: e.id,
                         new_id: e._previewId || this.getNewEntityIdForEntity(e),
-                        new_name: e._previewName || this.getEntityFriendlyNameForEntity(e),
+                        new_name: e._previewName ?? this.getEntityFriendlyNameForEntity(e),
                         registry_id: e.registry_id
                     }));
                     // Capture drift device ids so the completion handler can sync them after.

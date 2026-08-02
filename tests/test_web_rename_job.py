@@ -135,3 +135,51 @@ def test_init_client_recreates_missing_restructurer(monkeypatch) -> None:
 
     assert asyncio.run(web_ui.init_client()) is client
     assert web_ui.renamer_state["restructurer"].client is client
+
+
+def test_single_entity_rename_can_clear_friendly_name(monkeypatch) -> None:
+    """An explicitly empty name is sent to HA instead of rejected as missing."""
+    calls = []
+
+    class FakeWebSocket:
+        """Provide the connection lifecycle used by the endpoint."""
+
+        def __init__(self, url: str, token: str) -> None:
+            """Accept the configured HA connection details."""
+
+        async def connect(self) -> None:
+            """Open the fake connection."""
+
+        async def disconnect(self) -> None:
+            """Close the fake connection."""
+
+    class FakeEntityRegistry:
+        """Record the update sent by the endpoint."""
+
+        def __init__(self, websocket: FakeWebSocket) -> None:
+            """Accept the endpoint's WebSocket client."""
+
+        async def rename_entity(
+            self,
+            old_entity_id: str,
+            new_entity_id: str | None,
+            friendly_name: str | None,
+        ) -> dict:
+            """Record and accept an entity update."""
+            calls.append((old_entity_id, new_entity_id, friendly_name))
+            return {"entity_id": old_entity_id}
+
+    monkeypatch.setenv("HA_URL", "http://homeassistant:8123")
+    monkeypatch.setenv("HA_TOKEN", "token")
+    monkeypatch.setattr(web_ui, "HomeAssistantWebSocket", FakeWebSocket)
+    monkeypatch.setattr(web_ui, "EntityRegistry", FakeEntityRegistry)
+
+    with web_ui.app.test_request_context(
+        "/api/rename_entity",
+        method="POST",
+        json={"old_entity_id": "light.kitchen_lamp", "new_friendly_name": ""},
+    ):
+        response = asyncio.run(web_ui._rename_entity_async())
+
+    assert response.get_json()["success"] is True
+    assert calls == [("light.kitchen_lamp", None, "")]

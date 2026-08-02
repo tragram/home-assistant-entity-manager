@@ -367,6 +367,11 @@ class EntityRestructurer:
                 return object_id.replace("_", " ").title()
             return ""
 
+        # A device-scoped entity using HA's entity-name model with no native
+        # name is the device's main entity. Its empty suffix is intentional.
+        if registry.get("has_entity_name") and registry.get("original_name") is None:
+            return ""
+
         entity_type = self.get_entity_type(entity_id, device_class)
         return entity_type.replace("_", " ").title()
 

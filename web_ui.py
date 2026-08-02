@@ -2321,12 +2321,13 @@ async def _rename_entity_async():
 
     old_entity_id = sanitize_entity_id(data.get("old_entity_id"))
     new_entity_id = sanitize_entity_id(data.get("new_entity_id")) if data.get("new_entity_id") else None
+    has_friendly_name = "new_friendly_name" in data and data.get("new_friendly_name") is not None
     new_friendly_name = sanitize_name(data.get("new_friendly_name"))
 
     if not old_entity_id:
         return jsonify({"error": "Invalid old_entity_id"}), 400
 
-    if not new_entity_id and not new_friendly_name:
+    if not new_entity_id and not has_friendly_name:
         return jsonify({"error": "new_entity_id or new_friendly_name required"}), 400
 
     try:
@@ -2342,7 +2343,7 @@ async def _rename_entity_async():
 
             # Check if anything actually needs to change
             id_changed = new_entity_id and old_entity_id != new_entity_id
-            name_needs_update = new_friendly_name is not None
+            name_needs_update = has_friendly_name
 
             if not id_changed and not name_needs_update:
                 return jsonify({"success": True, "skipped": True, "message": "No changes needed"})
@@ -2908,6 +2909,7 @@ async def _get_hierarchy_async():
                     "disabled_by": entity_data.get("disabled_by"),
                     "labels": entity_data.get("labels", []),
                     "platform": entity_data.get("platform"),  # Integration that provides this entity
+                    "has_entity_name": entity_data.get("has_entity_name", False),
                     "is_orphan": entity_id in orphan_entities,  # Entity restored but not provided by integration
                 }
             )

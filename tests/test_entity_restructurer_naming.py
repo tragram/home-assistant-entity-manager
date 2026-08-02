@@ -169,11 +169,32 @@ def test_composed_state_name_is_reduced_to_entity_name(restructurer):
 
 
 def test_device_class_is_last_resort_when_ha_provides_no_name(restructurer):
-    restructurer.entities["sensor.existing_id"].update({"original_name": None, "name": None})
+    restructurer.entities["sensor.existing_id"].update({"original_name": None, "name": None, "has_entity_name": False})
 
     context = restructurer.build_naming_context("sensor.existing_id", {})
 
     assert context["entity"] == "Temperature"
+
+
+def test_main_entity_keeps_empty_name_without_state_data(restructurer):
+    """An HA main entity must not gain a redundant domain suffix."""
+    entity_id = "light.old_main"
+    restructurer.naming_templates.apply_preset("home_assistant")
+    restructurer.entities = {
+        entity_id: {
+            "id": "registry-main-light",
+            "entity_id": entity_id,
+            "device_id": "device-1",
+            "original_name": None,
+            "name": None,
+            "has_entity_name": True,
+        }
+    }
+
+    assert restructurer.generate_new_entity_id(entity_id, {}) == (
+        "light.living_room_controller",
+        "",
+    )
 
 
 def test_existing_object_id_preserves_suffix_without_native_name(restructurer):
