@@ -2510,13 +2510,77 @@ def rename_device():
 
     # Do not rename the same device twice concurrently.
     for existing in renamer_state["job_store"].list_unfinished():
-        if existing.get("type") == "rename_device" and existing.get("payload", {}).get("device_id") == device_id:
+        if device_id in _job_device_ids(existing):
             return (
                 jsonify({"error": "A rename for this device is already in progress", "job_id": existing["job_id"]}),
                 409,
             )
 
     job = new_job("rename_device", {"device_id": device_id, "new_name": new_name}, job_id=uuid.uuid4().hex)
+    renamer_state["job_store"].save(job)
+    renamer_state["worker"].enqueue(job)
+    return jsonify(job), 202
+
+
+def _job_device_ids(job: dict[str, Any]) -> set[str]:
+    """Return every device ID targeted by a device-rename job."""
+    payload = job.get("payload", {})
+    if job.get("type") == "rename_device":
+        device_id = payload.get("device_id")
+        return {device_id} if device_id else set()
+    if job.get("type") == "rename_devices":
+        return {item.get("device_id") for item in payload.get("devices", []) if item.get("device_id")}
+    return set()
+
+
+def _validated_device_renames(data: Any) -> tuple[Optional[list[dict[str, str]]], Optional[str]]:
+    """Validate and sanitize a multi-device rename request."""
+    if not isinstance(data, dict) or not isinstance(data.get("devices"), list):
+        return None, "devices must be a list"
+    if not data["devices"]:
+        return None, "Select at least one device"
+
+    devices = []
+    seen = set()
+    for item in data["devices"]:
+        if not isinstance(item, dict):
+            return None, "Each device rename must be an object"
+        device_id = sanitize_registry_id(item.get("device_id"))
+        new_name = sanitize_name(item.get("new_name"))
+        if not device_id:
+            return None, "Invalid device ID"
+        if not new_name:
+            return None, f"Invalid device name for {device_id}"
+        if device_id in seen:
+            return None, f"Device {device_id} appears more than once"
+        seen.add(device_id)
+        devices.append({"device_id": device_id, "new_name": new_name})
+    return devices, None
+
+
+@app.route("/api/rename_devices", methods=["POST"])
+def rename_devices() -> Any:
+    """Enqueue several independent device renames as one background job."""
+    devices, error = _validated_device_renames(request.json)
+    if error:
+        return jsonify({"error": error}), 400
+
+    requested_ids = {item["device_id"] for item in devices}
+    for existing in renamer_state["job_store"].list_unfinished():
+        overlap = requested_ids & _job_device_ids(existing)
+        if overlap:
+            return (
+                jsonify(
+                    {
+                        "error": "A rename for one or more selected devices is already in progress",
+                        "device_ids": sorted(overlap),
+                        "job_id": existing["job_id"],
+                    }
+                ),
+                409,
+            )
+
+    job = new_job("rename_devices", {"devices": devices}, job_id=uuid.uuid4().hex)
     renamer_state["job_store"].save(job)
     renamer_state["worker"].enqueue(job)
     return jsonify(job), 202
@@ -2735,7 +2799,93 @@ async def rename_device_handler(job, ctx):
         await ws.disconnect()
 
 
+class _BatchDeviceRenameContext:
+    """Translate one device's entity progress into batch-device progress."""
+
+    def __init__(self, parent: Any, index: int, total: int, device_name: str) -> None:
+        """Bind an individual device run to its parent batch context."""
+        self.parent = parent
+        self.index = index
+        self.total = total
+        self.device_name = device_name
+
+    def progress(self, done: int, total: int, current: str = "") -> None:
+        """Report the current device and its nested entity progress."""
+        detail = f"Device {self.index}/{self.total}: {self.device_name}"
+        if total > 0:
+            detail += f" ({done}/{total} entities)"
+        self.parent.progress(self.index - 1, self.total, current=detail)
+
+    def log(self, step: str, message: str) -> None:
+        """Prefix a child log entry with its device name."""
+        self.parent.log(step, f"{self.device_name}: {message}")
+
+
+async def rename_devices_handler(job: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """Rename multiple devices independently and collect per-device outcomes."""
+    devices = job["payload"]["devices"]
+    total = len(devices)
+    results = []
+    completed = 0
+    warnings = 0
+    failed = 0
+    ctx.progress(0, total, current="Preparing device renames")
+
+    for index, item in enumerate(devices, start=1):
+        device_id = item["device_id"]
+        new_name = item["new_name"]
+        child_ctx = _BatchDeviceRenameContext(ctx, index, total, new_name)
+        ctx.log("DEVICE", f"Starting {device_id} -> {new_name}")
+        try:
+            result = await rename_device_handler({"payload": item}, child_ctx)
+            has_warnings = bool(
+                result.get("entities_failed") or result.get("z2m_failed") or result.get("dashboard_manual_updates")
+            )
+            status = "warning" if has_warnings else "completed"
+            if has_warnings:
+                warnings += 1
+            else:
+                completed += 1
+            results.append(
+                {
+                    "device_id": device_id,
+                    "new_name": new_name,
+                    "status": status,
+                    "result": result,
+                }
+            )
+            ctx.log("DEVICE", f"Finished {new_name} ({status})")
+        except Exception as error:  # noqa: BLE001 - the remaining devices must continue
+            failed += 1
+            logger.exception("Batch rename failed for device %s", device_id)
+            results.append(
+                {
+                    "device_id": device_id,
+                    "new_name": new_name,
+                    "status": "failed",
+                    "error": str(error),
+                }
+            )
+            ctx.log("ERROR", f"{new_name}: {error}")
+        ctx.progress(index, total, current=f"Finished {new_name}")
+
+    message = f"{completed} devices renamed"
+    if warnings:
+        message += f", {warnings} with warnings"
+    if failed:
+        message += f", {failed} failed"
+    return {
+        "success": failed == 0,
+        "message": message,
+        "completed": completed,
+        "warnings": warnings,
+        "failed": failed,
+        "devices": results,
+    }
+
+
 renamer_state["worker"].register("rename_device", rename_device_handler)
+renamer_state["worker"].register("rename_devices", rename_devices_handler)
 
 
 @app.route("/api/sync_z2m_name", methods=["POST"])
@@ -2990,6 +3140,28 @@ def naming_templates_config() -> Any:
         return jsonify({"error": "Failed to save naming templates"}), 500
 
 
+def _render_naming_contexts(
+    manager: NamingTemplates,
+    templates: dict[str, str],
+    contexts: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Render validated naming templates for a list of contexts."""
+    manager.validate_templates(templates)
+    allowed_fields = manager.get_config()["allowed_fields"]
+    results = []
+    for context in contexts:
+        if not isinstance(context, dict):
+            raise ValueError("Each naming context must be an object")
+        values = {field: str(context.get(field) or "") for field in allowed_fields}
+        rendered = {}
+        for key, template in templates.items():
+            rendered[key] = manager.render_template(template, values, normalize=key == "entity_id")
+        domain = values.get("domain") or "sensor"
+        rendered["entity_id"] = f"{domain}.{rendered['entity_id']}"
+        results.append(rendered)
+    return results
+
+
 @app.route("/api/naming_templates/preview", methods=["POST"])
 def preview_naming_templates() -> Any:
     """Render a sample context without persisting template changes."""
@@ -3000,14 +3172,26 @@ def preview_naming_templates() -> Any:
     context = data.get("context", {})
     manager = renamer_state["naming_templates"]
     try:
-        manager.validate_templates(templates)
-        values = {field: str(context.get(field) or "") for field in manager.get_config()["allowed_fields"]}
-        rendered = {}
-        for key, template in templates.items():
-            rendered[key] = manager.render_template(template, values, normalize=key == "entity_id")
-        domain = values.get("domain") or "sensor"
-        rendered["entity_id"] = f"{domain}.{rendered['entity_id']}"
+        rendered = _render_naming_contexts(manager, templates, [context])[0]
         return jsonify({"rendered": rendered})
+    except (NamingTemplateError, KeyError, ValueError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@app.route("/api/naming_templates/preview_batch", methods=["POST"])
+def preview_naming_templates_batch() -> Any:
+    """Render multiple naming contexts in one request for batch review screens."""
+    data = request.json
+    if not isinstance(data, dict) or not isinstance(data.get("contexts"), list):
+        return jsonify({"error": "contexts must be a list"}), 400
+    if len(data["contexts"]) > 5000:
+        return jsonify({"error": "Too many naming contexts"}), 400
+
+    templates = data.get("templates", {})
+    manager = renamer_state["naming_templates"]
+    try:
+        results = _render_naming_contexts(manager, templates, data["contexts"])
+        return jsonify({"rendered": results})
     except (NamingTemplateError, KeyError, ValueError) as error:
         return jsonify({"error": str(error)}), 400
 

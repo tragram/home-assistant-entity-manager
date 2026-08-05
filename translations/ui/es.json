@@ -179,6 +179,26 @@
     "disabled_badge": "desactivado",
     "filter_placeholder": "Filtrar dispositivos..."
   },
+  "batch_rename": {
+    "select_devices": "Seleccionar dispositivos",
+    "select_device": "Seleccionar dispositivo",
+    "select_visible": "Seleccionar visibles",
+    "select_area": "Seleccionar área",
+    "select_floor": "Seleccionar planta",
+    "devices_selected": "dispositivos seleccionados",
+    "review_changes": "Revisar cambios",
+    "review_title": "Revisar nombres de dispositivos",
+    "building_preview": "Creando vista previa…",
+    "no_changes": "Sin cambios; se omitirá este dispositivo.",
+    "empty_name": "El nombre del dispositivo no puede estar vacío",
+    "devices_to_rename": "dispositivos para renombrar",
+    "rename": "Renombrar",
+    "completed": "Cambio de nombres completado",
+    "retry_failed": "Reintentar dispositivos fallidos",
+    "status_completed": "Completado",
+    "status_warning": "Advertencia",
+    "status_failed": "Fallido"
+  },
   "units": {
     "entities": "Entidades",
     "devices": "Dispositivos"
@@ -348,6 +368,7 @@
   },
   "jobs": {
     "rename_device": "Renombrando dispositivo",
+    "rename_devices": "Renombrando dispositivos",
     "applying": "Aplicando cambios",
     "enabling": "Activando entidades",
     "working": "Procesando",

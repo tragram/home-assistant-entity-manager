@@ -1606,6 +1606,12 @@
                         </h2>
                         <div class="flex items-center gap-2">
                             <span class="badge badge-gray" x-text="filteredDevices.length"></span>
+                            <button @click.stop="toggleBatchRenameMode()"
+                                    class="btn btn-ghost btn-sm"
+                                    :class="batchRename.mode ? 'text-blue-600 bg-blue-50' : ''"
+                                    :title="t('batch_rename.select_devices')">
+                                <i :class="batchRename.mode ? 'ri-close-line' : 'ri-checkbox-multiple-line'"></i>
+                            </button>
                             <!-- Show selected device name when collapsed -->
                             <span x-show="isMobile && panelCollapsed.devices && selectedDeviceData"
                                   class="text-sm text-green-600 font-medium truncate max-w-32"
@@ -1629,6 +1635,21 @@
                             <i class="ri-close-line"></i>
                         </button>
                     </div>
+                    <div x-show="batchRename.mode" class="flex flex-wrap items-center gap-2 mt-2">
+                        <button @click.stop="selectVisibleBatchDevices()" class="btn btn-ghost btn-sm">
+                            <span x-text="t('batch_rename.select_visible')">Select visible</span>
+                        </button>
+                        <button @click.stop="selectAreaBatchDevices()" class="btn btn-ghost btn-sm">
+                            <span x-text="t('batch_rename.select_area')">Select area</span>
+                        </button>
+                        <button x-show="selectedAreaData?.floor_id" @click.stop="selectFloorBatchDevices()" class="btn btn-ghost btn-sm">
+                            <span x-text="t('batch_rename.select_floor')">Select floor</span>
+                        </button>
+                        <button @click.stop="batchRename.selected = []" class="btn btn-ghost btn-sm"
+                                :disabled="batchRename.selected.length === 0">
+                            <span x-text="t('buttons.select_none')">Select none</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="panel-content">
                     <template x-if="!selectedArea">
@@ -1642,14 +1663,20 @@
                             <template x-for="device in filteredDevices" :key="device.id">
                                 <div class="hierarchy-item device-item"
                                      :class="{
-                                         'selected': selectedDevice === device.id,
+                                         'selected': batchRename.mode ? isBatchDeviceSelected(device.id) : selectedDevice === device.id,
                                          'has-changes': deviceNeedsRename(device),
                                          'is-disabled': device.disabled_by,
                                          'no-area-mode': selectedArea === '__no_area__'
                                      }"
-                                     @click="selectDevice(device)">
+                                     @click="batchRename.mode ? toggleBatchDevice(device.id) : selectDevice(device)">
                                     <!-- Main row -->
                                     <div class="device-main-row">
+                                        <input x-show="batchRename.mode"
+                                               type="checkbox"
+                                               class="w-4 h-4 accent-blue-600 shrink-0"
+                                               :checked="isBatchDeviceSelected(device.id)"
+                                               @click.stop="toggleBatchDevice(device.id)"
+                                               :aria-label="t('batch_rename.select_device')">
                                         <!-- Icon -->
                                         <div class="device-icon">
                                             <template x-if="device.integrations && device.integrations.length > 0">
@@ -2099,9 +2126,9 @@
 
         <!-- Action Bar - Fixed at viewport bottom -->
         <div class="action-bar-fixed bg-white border-t shadow-lg px-4 py-3"
-             x-show="pendingChangesCount > 0 || disabledEntitiesCount > 0"
+             x-show="batchRename.mode || pendingChangesCount > 0 || disabledEntitiesCount > 0"
              x-cloak>
-            <div class="flex items-center justify-between">
+            <div x-show="!batchRename.mode" class="flex items-center justify-between">
                 <div class="flex items-center gap-4">
                     <span class="text-sm text-gray-600" x-show="pendingChangesCount > 0">
                         <span class="font-bold text-amber-600" x-text="pendingChangesCount"></span>
@@ -2131,6 +2158,23 @@
                     </button>
                 </div>
             </div>
+            <div x-show="batchRename.mode" class="flex items-center justify-between gap-3">
+                <div class="text-sm text-gray-600">
+                    <span class="font-bold text-blue-600" x-text="batchRename.selected.length"></span>
+                    <span x-text="t('batch_rename.devices_selected')">devices selected</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button @click="toggleBatchRenameMode()" class="btn btn-ghost">
+                        <span x-text="t('buttons.cancel')">Cancel</span>
+                    </button>
+                    <button @click="openBatchRenameReview()"
+                            class="btn btn-primary"
+                            :disabled="batchRename.selected.length === 0 || batchRename.previewing">
+                        <i class="ri-eye-line mr-2"></i>
+                        <span x-text="t('batch_rename.review_changes')">Review changes</span>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <!-- Toast Messages -->
@@ -2145,6 +2189,100 @@
                 <button @click="message = ''" class="ml-4 opacity-70 hover:opacity-100">
                     <i class="ri-close-line"></i>
                 </button>
+            </div>
+        </div>
+
+        <!-- Multi-device rename review -->
+        <div x-cloak
+             x-show="batchRename.showReview"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+             @click.self="closeBatchRenameReview()">
+            <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+                <div class="p-5 border-b flex items-center justify-between gap-3">
+                    <div>
+                        <h3 class="text-lg font-semibold" x-text="t('batch_rename.review_title')">Review device renames</h3>
+                        <p class="text-sm text-gray-500">
+                            <span x-text="batchRename.rows.length"></span>
+                            <span x-text="t('batch_rename.devices_selected')">devices selected</span>
+                        </p>
+                    </div>
+                    <button @click="closeBatchRenameReview()" class="btn btn-ghost btn-sm">
+                        <i class="ri-close-line"></i>
+                    </button>
+                </div>
+
+                <div class="overflow-y-auto p-5 space-y-3">
+                    <div x-show="batchRename.previewing" class="text-sm text-blue-600 flex items-center gap-2">
+                        <i class="ri-loader-4-line animate-spin"></i>
+                        <span x-text="t('batch_rename.building_preview')">Building preview…</span>
+                    </div>
+                    <div x-show="batchRename.error" class="p-3 rounded bg-red-50 text-red-700 text-sm"
+                         x-text="batchRename.error"></div>
+
+                    <template x-for="row in batchRename.rows" :key="row.device_id">
+                        <div class="border rounded-lg overflow-hidden"
+                             :class="row.conflicts?.length ? 'border-red-300' : (row.has_changes ? 'border-gray-200' : 'border-green-200')">
+                            <div class="p-4 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-3 items-end">
+                                <div class="min-w-0">
+                                    <div class="text-xs text-gray-500 mb-1" x-text="row.area_name || t('area.no_area')"></div>
+                                    <div class="text-sm font-medium truncate" x-text="row.current_name"></div>
+                                    <div class="text-xs text-gray-400" x-text="t('device.current_name')">Current name</div>
+                                </div>
+                                <div>
+                                    <label class="text-xs text-gray-500 block mb-1" x-text="t('device.base_name_label')"></label>
+                                    <input type="text"
+                                           class="edit-input w-full"
+                                           x-model="row.base_name"
+                                           @change="refreshBatchRenamePreviews()"
+                                           :disabled="batchRename.previewing || batchRename.submitting">
+                                    <div class="text-xs text-blue-600 mt-1 truncate" x-text="row.new_name"></div>
+                                </div>
+                                <button @click="row.preview_open = !row.preview_open"
+                                        class="btn btn-ghost btn-sm"
+                                        :disabled="!row.entity_changes?.length">
+                                    <span x-text="`${row.entity_changes?.length || 0} ${t('units.entities').toLowerCase()}`"></span>
+                                    <i :class="row.preview_open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'"></i>
+                                </button>
+                            </div>
+
+                            <div x-show="row.conflicts?.length" class="px-4 pb-3 text-xs text-red-600">
+                                <template x-for="conflict in row.conflicts" :key="conflict">
+                                    <div><i class="ri-error-warning-line mr-1"></i><span x-text="conflict"></span></div>
+                                </template>
+                            </div>
+                            <div x-show="!row.has_changes && !row.conflicts?.length" class="px-4 pb-3 text-xs text-green-700">
+                                <i class="ri-check-line mr-1"></i><span x-text="t('batch_rename.no_changes')">No changes; this device will be skipped.</span>
+                            </div>
+
+                            <div x-show="row.preview_open" class="border-t bg-gray-50 max-h-56 overflow-y-auto">
+                                <template x-for="change in row.entity_changes" :key="change.old_id">
+                                    <div class="px-4 py-2 border-b last:border-b-0 text-xs grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center">
+                                        <span class="font-mono text-gray-500 truncate" x-text="change.old_id"></span>
+                                        <i class="ri-arrow-right-line text-gray-400"></i>
+                                        <span class="font-mono text-green-700 truncate" x-text="change.new_id"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="p-4 border-t flex items-center justify-between gap-3">
+                    <div class="text-sm text-gray-500">
+                        <span x-text="batchRenameReadyRows.length"></span>
+                        <span x-text="t('batch_rename.devices_to_rename')">devices to rename</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="closeBatchRenameReview()" class="btn btn-ghost"
+                                :disabled="batchRename.submitting" x-text="t('buttons.cancel')">Cancel</button>
+                        <button @click="submitBatchRename()"
+                                class="btn btn-primary"
+                                :disabled="batchRename.submitting || batchRename.previewing || batchRenameReadyRows.length === 0 || batchRenameHasConflicts">
+                            <i x-show="batchRename.submitting" class="ri-loader-4-line animate-spin mr-2"></i>
+                            <span x-text="`${t('batch_rename.rename')} ${batchRenameReadyRows.length} ${t('units.devices').toLowerCase()}`"></span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2187,6 +2325,19 @@
                     <p class="text-sm text-gray-600 mb-3 truncate"
                        x-text="isJobTerminal(jobPanel.job) ? (jobFailed(jobPanel.job) ? (jobPanel.job.error || t('jobs.failed')) : ((jobPanel.job.result && jobPanel.job.result.message) || t('jobs.completed'))) : (jobPanel.job && jobPanel.job.progress && jobPanel.job.progress.current) || t('jobs.working')"></p>
 
+                    <template x-if="isJobTerminal(jobPanel.job) && jobPanel.kind === 'rename_devices' && jobPanel.job?.result?.devices">
+                        <div class="mb-3 max-h-48 overflow-y-auto border rounded-lg divide-y">
+                            <template x-for="device in jobPanel.job.result.devices" :key="device.device_id">
+                                <div class="px-3 py-2 flex items-center justify-between gap-3 text-sm">
+                                    <span class="truncate" x-text="device.new_name"></span>
+                                    <span class="badge"
+                                          :class="device.status === 'completed' ? 'badge-green' : (device.status === 'warning' ? 'badge-amber' : 'badge-red')"
+                                          x-text="t('batch_rename.status_' + device.status)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
                     <!-- Collapsible, height-limited log tail -->
                     <template x-if="jobPanel.job && jobPanel.job.log && jobPanel.job.log.length">
                         <div class="mb-2">
@@ -2207,7 +2358,13 @@
                         </div>
                     </template>
 
-                    <div class="flex justify-end mt-4">
+                    <div class="flex justify-end gap-2 mt-4">
+                        <button x-show="isJobTerminal(jobPanel.job) && jobPanel.kind === 'rename_devices' && jobPanel.job?.result?.failed"
+                                @click="retryFailedBatchDevices(jobPanel.job)"
+                                class="btn btn-ghost">
+                            <i class="ri-refresh-line mr-1"></i>
+                            <span x-text="t('batch_rename.retry_failed')">Retry failed devices</span>
+                        </button>
                         <button @click="closeJobPanel()"
                                 :disabled="!isJobTerminal(jobPanel.job)"
                                 class="btn"
@@ -2592,6 +2749,15 @@
                 syncingZ2m: false,  // Loading state for Z2M name sync
                 applyingEntityId: null,  // ID of entity currently being renamed
                 previewVersion: 0,  // Incremented to force Alpine reactivity on preview changes
+                batchRename: {
+                    mode: false,
+                    showReview: false,
+                    selected: [],
+                    rows: [],
+                    previewing: false,
+                    submitting: false,
+                    error: ''
+                },
 
                 // Filters
                 onlyChanges: false,
@@ -3748,6 +3914,251 @@
                     }
                 },
 
+                toggleBatchRenameMode() {
+                    this.batchRename.mode = !this.batchRename.mode;
+                    if (!this.batchRename.mode) {
+                        this.batchRename.selected = [];
+                        this.batchRename.rows = [];
+                        this.batchRename.showReview = false;
+                        this.batchRename.error = '';
+                    }
+                },
+
+                isBatchDeviceSelected(deviceId) {
+                    return this.batchRename.selected.includes(deviceId);
+                },
+
+                toggleBatchDevice(deviceId) {
+                    if (this.isBatchDeviceSelected(deviceId)) {
+                        this.batchRename.selected = this.batchRename.selected.filter(id => id !== deviceId);
+                    } else {
+                        this.batchRename.selected = [...this.batchRename.selected, deviceId];
+                    }
+                },
+
+                selectVisibleBatchDevices() {
+                    const visibleIds = this.filteredDevices.map(device => device.id);
+                    this.batchRename.selected = [...new Set([...this.batchRename.selected, ...visibleIds])];
+                },
+
+                selectAreaBatchDevices() {
+                    const areaIds = this.hierarchy.devices
+                        .filter(device => this.selectedArea === '__no_area__' ? !device.area_id : device.area_id === this.selectedArea)
+                        .filter(device => this.showDisabled || !device.disabled_by)
+                        .map(device => device.id);
+                    this.batchRename.selected = [...new Set([...this.batchRename.selected, ...areaIds])];
+                },
+
+                selectFloorBatchDevices() {
+                    const floorId = this.selectedAreaData?.floor_id;
+                    if (!floorId) return;
+                    const areaIds = new Set(this.hierarchy.areas.filter(area => area.floor_id === floorId).map(area => area.id));
+                    const floorIds = this.hierarchy.devices
+                        .filter(device => areaIds.has(device.area_id))
+                        .filter(device => this.showDisabled || !device.disabled_by)
+                        .filter(device => !this.onlyChanges || this.deviceNeedsRename(device))
+                        .map(device => device.id);
+                    this.batchRename.selected = [...new Set([...this.batchRename.selected, ...floorIds])];
+                },
+
+                async openBatchRenameReview() {
+                    const devices = this.batchRename.selected
+                        .map(id => this.hierarchy.devices.find(device => device.id === id))
+                        .filter(Boolean);
+                    if (!devices.length) return;
+
+                    this.batchRename.rows = devices.map(device => {
+                        const area = this.hierarchy.areas.find(item => item.id === device.area_id);
+                        return {
+                            device_id: device.id,
+                            current_name: device.name,
+                            base_name: device.base_name || '',
+                            new_name: device.name,
+                            area_name: area?.name || '',
+                            entity_changes: [],
+                            planned_entities: [],
+                            conflicts: [],
+                            has_changes: false,
+                            preview_open: false
+                        };
+                    });
+                    this.batchRename.showReview = true;
+                    await this.refreshBatchRenamePreviews();
+                },
+
+                closeBatchRenameReview() {
+                    if (this.batchRename.submitting) return;
+                    this.batchRename.showReview = false;
+                    this.batchRename.error = '';
+                },
+
+                async refreshBatchRenamePreviews() {
+                    this.batchRename.previewing = true;
+                    this.batchRename.error = '';
+                    try {
+                        const entries = [];
+                        for (const row of this.batchRename.rows) {
+                            row.entity_changes = [];
+                            row.planned_entities = [];
+                            row.conflicts = [];
+                            const device = this.hierarchy.devices.find(item => item.id === row.device_id);
+                            const entities = this.hierarchy.entities.filter(entity => entity.device_id === row.device_id);
+                            entries.push({
+                                row,
+                                entity: null,
+                                kind: 'device',
+                                context: this.deviceNamingContext(device, row.base_name.trim())
+                            });
+                            for (const entity of entities) {
+                                const context = this.entityNamingContext(entity);
+                                context.device = row.base_name.trim();
+                                entries.push({row, entity, kind: 'entity', context});
+                            }
+                        }
+
+                        const response = await fetch('api/naming_templates/preview_batch', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                templates: this.namingConfig.templates,
+                                contexts: entries.map(entry => entry.context)
+                            })
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Failed to preview device renames');
+
+                        entries.forEach((entry, index) => {
+                            const rendered = data.rendered[index];
+                            if (entry.kind === 'device') {
+                                entry.row.new_name = rendered.device_name || entry.row.current_name;
+                                return;
+                            }
+                            const plan = {
+                                old_id: entry.entity.id,
+                                new_id: rendered.entity_id,
+                                old_name: entry.entity.original_name ?? '',
+                                new_name: rendered.entity_name,
+                                registry_id: entry.entity.registry_id
+                            };
+                            entry.row.planned_entities.push(plan);
+                            if (plan.old_id !== plan.new_id || plan.old_name !== plan.new_name) {
+                                entry.row.entity_changes.push(plan);
+                            }
+                        });
+
+                        this.validateBatchRenameRows();
+                    } catch (error) {
+                        this.batchRename.error = error.message;
+                    } finally {
+                        this.batchRename.previewing = false;
+                    }
+                },
+
+                validateBatchRenameRows() {
+                    const targets = new Map();
+                    for (const row of this.batchRename.rows) {
+                        row.conflicts = [];
+                        if (!row.base_name.trim()) row.conflicts.push(this.t('batch_rename.empty_name'));
+                        for (const plan of row.planned_entities) {
+                            const owners = targets.get(plan.new_id) || [];
+                            owners.push({row, plan});
+                            targets.set(plan.new_id, owners);
+
+                            const existing = this.hierarchy.entities.find(entity => entity.id === plan.new_id);
+                            if (plan.new_id !== plan.old_id && existing && existing.registry_id !== plan.registry_id) {
+                                row.conflicts.push(`${this.t('entity.id_conflict')}: ${plan.new_id}`);
+                            }
+                        }
+                    }
+                    for (const [entityId, owners] of targets.entries()) {
+                        if (owners.length < 2) continue;
+                        for (const owner of owners) {
+                            const message = `${this.t('entity.id_conflict')}: ${entityId}`;
+                            if (!owner.row.conflicts.includes(message)) owner.row.conflicts.push(message);
+                        }
+                    }
+                    for (const row of this.batchRename.rows) {
+                        row.has_changes = row.current_name !== row.new_name || row.entity_changes.length > 0;
+                    }
+                },
+
+                get batchRenameReadyRows() {
+                    return this.batchRename.rows.filter(row => row.has_changes);
+                },
+
+                get batchRenameHasConflicts() {
+                    return this.batchRename.rows.some(row => row.conflicts?.length);
+                },
+
+                async submitBatchRename() {
+                    if (this.batchRename.submitting || this.batchRenameHasConflicts || !this.batchRenameReadyRows.length) return;
+                    this.batchRename.submitting = true;
+                    this.batchRename.error = '';
+                    try {
+                        const response = await fetch('api/rename_devices', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                devices: this.batchRenameReadyRows.map(row => ({
+                                    device_id: row.device_id,
+                                    new_name: row.new_name
+                                }))
+                            })
+                        });
+                        const job = await response.json();
+                        if (!response.ok || !job.job_id) {
+                            throw new Error(job.error || 'Failed to start device renames');
+                        }
+                        this.batchRename.showReview = false;
+                        this.startJob('api/jobs/' + job.job_id, job, {
+                            kind: 'rename_devices',
+                            titleKey: 'jobs.rename_devices',
+                            onDone: (finished) => this.onBatchRenameDone(finished)
+                        });
+                    } catch (error) {
+                        this.batchRename.error = error.message;
+                    } finally {
+                        this.batchRename.submitting = false;
+                    }
+                },
+
+                async onBatchRenameDone(job) {
+                    const result = job.result || {};
+                    if (!this.jobFailed(job)) {
+                        const type = result.failed || result.warnings ? 'error' : 'success';
+                        this.showMessage(result.message || this.t('batch_rename.completed'), type, true);
+                    }
+                    this.batchRename.mode = false;
+                    this.batchRename.selected = [];
+                    this.batchRename.rows = [];
+                    await this.loadHierarchy();
+                },
+
+                async retryFailedBatchDevices(job) {
+                    const devices = (job?.result?.devices || [])
+                        .filter(device => device.status === 'failed')
+                        .map(device => ({device_id: device.device_id, new_name: device.new_name}));
+                    if (!devices.length) return;
+                    try {
+                        const response = await fetch('api/rename_devices', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({devices})
+                        });
+                        const retryJob = await response.json();
+                        if (!response.ok || !retryJob.job_id) {
+                            throw new Error(retryJob.error || 'Failed to retry device renames');
+                        }
+                        this.startJob('api/jobs/' + retryJob.job_id, retryJob, {
+                            kind: 'rename_devices',
+                            titleKey: 'jobs.rename_devices',
+                            onDone: (finished) => this.onBatchRenameDone(finished)
+                        });
+                    } catch (error) {
+                        this.showMessage(error.message, 'error');
+                    }
+                },
+
                 // Select a virtual device group (automations, scenes, helpers, etc.)
                 selectVirtualDevice(virtualDeviceId) {
                     this.selectedDevice = virtualDeviceId;
@@ -4806,7 +5217,8 @@
                     // onDone handler surfaces a self-dismissing toast and refreshes in
                     // the background. Hard failure: keep the panel open so the error
                     // stays visible (no toast — the panel already shows it).
-                    if (finished && !this.jobFailed(finished)) this.closeJobPanel();
+                    const keepResultSummary = this.jobPanel.kind === 'rename_devices';
+                    if (finished && !this.jobFailed(finished) && !keepResultSummary) this.closeJobPanel();
                     if (cb) await cb(finished);
                 },
 
@@ -4878,6 +5290,9 @@
                 jobKindMeta(type) {
                     if (type === 'rename_device') {
                         return { titleKey: 'jobs.rename_device', onDone: (job) => this.onRenameDeviceDone(job) };
+                    }
+                    if (type === 'rename_devices') {
+                        return { titleKey: 'jobs.rename_devices', onDone: (job) => this.onBatchRenameDone(job) };
                     }
                     if (type === 'execute' || type === 'execute_direct') {
                         return { titleKey: 'jobs.applying', onDone: (job) => this.onExecuteDone(job) };

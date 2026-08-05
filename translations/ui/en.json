@@ -179,6 +179,26 @@
     "disabled_badge": "disabled",
     "filter_placeholder": "Filter devices..."
   },
+  "batch_rename": {
+    "select_devices": "Select devices",
+    "select_device": "Select device",
+    "select_visible": "Select visible",
+    "select_area": "Select area",
+    "select_floor": "Select floor",
+    "devices_selected": "devices selected",
+    "review_changes": "Review changes",
+    "review_title": "Review device renames",
+    "building_preview": "Building preview…",
+    "no_changes": "No changes; this device will be skipped.",
+    "empty_name": "Device name cannot be empty",
+    "devices_to_rename": "devices to rename",
+    "rename": "Rename",
+    "completed": "Device renames completed",
+    "retry_failed": "Retry failed devices",
+    "status_completed": "Completed",
+    "status_warning": "Warning",
+    "status_failed": "Failed"
+  },
   "units": {
     "entities": "Entities",
     "devices": "Devices"
@@ -348,6 +368,7 @@
   },
   "jobs": {
     "rename_device": "Renaming device",
+    "rename_devices": "Renaming devices",
     "applying": "Applying changes",
     "enabling": "Enabling entities",
     "working": "Working",

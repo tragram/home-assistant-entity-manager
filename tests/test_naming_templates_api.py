@@ -62,3 +62,36 @@ def test_preview_renders_floor_and_domain(client):
         "entity_name": "Kitchen Temperature",
         "entity_id": "sensor.ground_climate_sensor_temperature",
     }
+
+
+def test_batch_preview_renders_each_context_in_order(client):
+    """The review UI can preview many devices without one request per entity."""
+    templates = {
+        "device_name": "{area} {device}",
+        "entity_name": "{device} {entity}",
+        "entity_id": "{area} {device} {entity}",
+    }
+    response = client.post(
+        "/api/naming_templates/preview_batch",
+        json={
+            "templates": templates,
+            "contexts": [
+                {"area": "Hall", "device": "Lamp", "entity": "Power", "domain": "sensor"},
+                {"area": "Kitchen", "device": "Plug", "entity": "", "domain": "switch"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["rendered"] == [
+        {
+            "device_name": "Hall Lamp",
+            "entity_name": "Lamp Power",
+            "entity_id": "sensor.hall_lamp_power",
+        },
+        {
+            "device_name": "Kitchen Plug",
+            "entity_name": "Plug",
+            "entity_id": "switch.kitchen_plug",
+        },
+    ]

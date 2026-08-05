@@ -54,6 +54,83 @@ def test_rename_devices_may_share_display_name(client):
     assert c.post("/api/rename_device", json={"device_id": "dev2", "new_name": "Lamp"}).status_code == 202
 
 
+def test_batch_device_rename_enqueues_sanitized_changes(client):
+    """A batch request stores all independently editable device names."""
+    c, store = client
+
+    response = c.post(
+        "/api/rename_devices",
+        json={
+            "devices": [
+                {"device_id": "dev1", "new_name": " Hall Lamp "},
+                {"device_id": "dev2", "new_name": "Kitchen Lamp"},
+            ]
+        },
+    )
+
+    assert response.status_code == 202
+    job = response.get_json()
+    assert job["type"] == "rename_devices"
+    assert store.load(job["job_id"])["payload"]["devices"] == [
+        {"device_id": "dev1", "new_name": "Hall Lamp"},
+        {"device_id": "dev2", "new_name": "Kitchen Lamp"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "devices,error",
+    [
+        ([], "Select at least one device"),
+        ([{"device_id": "dev1", "new_name": ""}], "Invalid device name"),
+        (
+            [
+                {"device_id": "dev1", "new_name": "One"},
+                {"device_id": "dev1", "new_name": "Two"},
+            ],
+            "appears more than once",
+        ),
+    ],
+)
+def test_batch_device_rename_rejects_invalid_changes(client, devices, error):
+    """Malformed or duplicate device rows are rejected before enqueueing."""
+    c, _ = client
+
+    response = c.post("/api/rename_devices", json={"devices": devices})
+
+    assert response.status_code == 400
+    assert error in response.get_json()["error"]
+
+
+def test_batch_device_rename_rejects_device_in_another_rename(client):
+    """A device cannot be queued in both a single and batch rename."""
+    c, _ = client
+    assert c.post("/api/rename_device", json={"device_id": "dev1", "new_name": "One"}).status_code == 202
+
+    response = c.post(
+        "/api/rename_devices",
+        json={"devices": [{"device_id": "dev1", "new_name": "Two"}]},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()["device_ids"] == ["dev1"]
+
+
+def test_single_device_rename_rejects_device_in_batch(client):
+    """The overlap guard works regardless of which rename type was queued first."""
+    c, _ = client
+    assert (
+        c.post(
+            "/api/rename_devices",
+            json={"devices": [{"device_id": "dev1", "new_name": "One"}]},
+        ).status_code
+        == 202
+    )
+
+    response = c.post("/api/rename_device", json={"device_id": "dev1", "new_name": "Two"})
+
+    assert response.status_code == 409
+
+
 def test_job_get_and_list(client):
     c, _ = client
     jid = c.post("/api/rename_device", json={"device_id": "dev1", "new_name": "A"}).get_json()["job_id"]
@@ -307,3 +384,55 @@ def test_device_rename_updates_dashboards_when_dependency_update_fails(monkeypat
     assert result["entities_failed"] == 0
     assert result["dashboards_updated"] == ["lovelace"]
     assert dashboard_calls == [[("light.old_lamp", "light.new_lamp")]]
+
+
+def test_batch_device_rename_continues_after_individual_failure(monkeypatch) -> None:
+    """A failed device is recorded without preventing later devices from running."""
+    calls = []
+
+    async def fake_rename_device(job: dict, ctx: object) -> dict:
+        """Return a success, failure, and warning for three generic devices."""
+        device_id = job["payload"]["device_id"]
+        calls.append(device_id)
+        if device_id == "dev2":
+            raise RuntimeError("registry unavailable")
+        return {
+            "entities_failed": 1 if device_id == "dev3" else 0,
+            "z2m_failed": None,
+            "dashboard_manual_updates": [],
+        }
+
+    class FakeContext:
+        """Record batch progress and log updates."""
+
+        def __init__(self) -> None:
+            """Create empty event collections."""
+            self.progress_events = []
+            self.log_events = []
+
+        def progress(self, done: int, total: int, current: str = "") -> None:
+            """Record a progress update."""
+            self.progress_events.append((done, total, current))
+
+        def log(self, step: str, message: str) -> None:
+            """Record a log update."""
+            self.log_events.append((step, message))
+
+    monkeypatch.setattr(web_ui, "rename_device_handler", fake_rename_device)
+    context = FakeContext()
+    job = {
+        "payload": {
+            "devices": [
+                {"device_id": "dev1", "new_name": "One"},
+                {"device_id": "dev2", "new_name": "Two"},
+                {"device_id": "dev3", "new_name": "Three"},
+            ]
+        }
+    }
+
+    result = asyncio.run(web_ui.rename_devices_handler(job, context))
+
+    assert calls == ["dev1", "dev2", "dev3"]
+    assert (result["completed"], result["warnings"], result["failed"]) == (1, 1, 1)
+    assert [device["status"] for device in result["devices"]] == ["completed", "failed", "warning"]
+    assert context.progress_events[-1] == (3, 3, "Finished Three")

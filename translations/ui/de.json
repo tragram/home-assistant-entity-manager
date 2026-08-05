@@ -179,6 +179,26 @@
     "disabled_badge": "deaktiviert",
     "filter_placeholder": "Geräte filtern..."
   },
+  "batch_rename": {
+    "select_devices": "Geräte auswählen",
+    "select_device": "Gerät auswählen",
+    "select_visible": "Sichtbare auswählen",
+    "select_area": "Bereich auswählen",
+    "select_floor": "Etage auswählen",
+    "devices_selected": "Geräte ausgewählt",
+    "review_changes": "Änderungen prüfen",
+    "review_title": "Geräteumbenennungen prüfen",
+    "building_preview": "Vorschau wird erstellt…",
+    "no_changes": "Keine Änderungen; dieses Gerät wird übersprungen.",
+    "empty_name": "Gerätename darf nicht leer sein",
+    "devices_to_rename": "Geräte umzubenennen",
+    "rename": "Umbenennen",
+    "completed": "Geräteumbenennungen abgeschlossen",
+    "retry_failed": "Fehlgeschlagene erneut versuchen",
+    "status_completed": "Abgeschlossen",
+    "status_warning": "Warnung",
+    "status_failed": "Fehlgeschlagen"
+  },
   "units": {
     "entities": "Entitäten",
     "devices": "Geräte"
@@ -348,6 +368,7 @@
   },
   "jobs": {
     "rename_device": "Gerät wird umbenannt",
+    "rename_devices": "Geräte werden umbenannt",
     "applying": "Änderungen werden angewendet",
     "enabling": "Entitäten werden aktiviert",
     "working": "Wird ausgeführt",

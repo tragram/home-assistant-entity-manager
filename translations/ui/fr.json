@@ -179,6 +179,26 @@
     "disabled_badge": "désactivé",
     "filter_placeholder": "Filtrer les appareils..."
   },
+  "batch_rename": {
+    "select_devices": "Sélectionner des appareils",
+    "select_device": "Sélectionner l’appareil",
+    "select_visible": "Sélectionner les visibles",
+    "select_area": "Sélectionner la zone",
+    "select_floor": "Sélectionner l’étage",
+    "devices_selected": "appareils sélectionnés",
+    "review_changes": "Vérifier les modifications",
+    "review_title": "Vérifier les renommages",
+    "building_preview": "Création de l’aperçu…",
+    "no_changes": "Aucune modification ; cet appareil sera ignoré.",
+    "empty_name": "Le nom de l’appareil ne peut pas être vide",
+    "devices_to_rename": "appareils à renommer",
+    "rename": "Renommer",
+    "completed": "Renommage des appareils terminé",
+    "retry_failed": "Réessayer les appareils en échec",
+    "status_completed": "Terminé",
+    "status_warning": "Avertissement",
+    "status_failed": "Échec"
+  },
   "units": {
     "entities": "Entités",
     "devices": "Appareils"
@@ -347,7 +367,8 @@
     "api_token_revoke_confirm": "Révoquer le jeton actuel ? Les outils externes qui l'utilisent cesseront de fonctionner."
   },
   "jobs": {
-    "rename_device": "Renommage de l'appareil",
+    "rename_device": "Renommage de l’appareil",
+    "rename_devices": "Renommage des appareils",
     "applying": "Application des modifications",
     "enabling": "Activation des entités",
     "working": "Traitement",
