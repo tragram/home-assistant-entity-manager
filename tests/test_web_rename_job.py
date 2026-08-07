@@ -213,6 +213,45 @@ def test_device_rename_preserves_names_captured_before_device_change() -> None:
     ]
 
 
+def test_device_rename_preserves_explicit_ha_entity_name() -> None:
+    """Renaming a device must not reset an entity name assigned by the user in HA."""
+
+    class FakeRestructurer:
+        """Model one user-named entity on a renamed device."""
+
+        entities = {
+            "sensor.kitchen_shelly_power": {
+                "device_id": "dev1",
+                "name": "Power",
+                "original_name": "Switch power",
+            }
+        }
+
+        def build_naming_context(self, entity_id: str, state: dict) -> dict[str, str]:
+            """Return the integration's native suffix when no user name exists."""
+            return {"entity": "Switch power"}
+
+        def generate_new_entity_id(
+            self,
+            entity_id: str,
+            state: dict,
+            entity_name: str | None = None,
+        ) -> tuple[str, str]:
+            """Generate an ID while modeling a full generated friendly name."""
+            suffix = (entity_name or "").lower().replace(" ", "_")
+            return f"sensor.living_room_shelly_{suffix}", f"Living room Shelly {entity_name}"
+
+    restructurer = FakeRestructurer()
+    states = [{"entity_id": "sensor.kitchen_shelly_power", "attributes": {}}]
+    entity_names = web_ui._capture_device_entity_names(restructurer, "dev1", states)
+    user_names = web_ui._capture_device_user_names(restructurer, "dev1")
+
+    assert entity_names == {"sensor.kitchen_shelly_power": "Power"}
+    assert web_ui._plan_device_entity_changes(restructurer, "dev1", states, entity_names, user_names) == [
+        ("sensor.kitchen_shelly_power", "sensor.living_room_shelly_power", "Power")
+    ]
+
+
 def test_init_client_recreates_missing_restructurer(monkeypatch) -> None:
     """A worker can restore the restructurer when the REST client already exists."""
     client = object()

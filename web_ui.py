@@ -2591,10 +2591,12 @@ def _plan_device_entity_changes(
     device_id: str,
     states: list[dict[str, Any]],
     preserved_entity_names: Optional[dict[str, str]] = None,
+    preserved_user_names: Optional[dict[str, str]] = None,
 ) -> list[tuple[str, str, str]]:
     """Generate template-based entity changes for a renamed device."""
     states_by_id = {state["entity_id"]: state for state in states}
     preserved_entity_names = preserved_entity_names or {}
+    preserved_user_names = preserved_user_names or {}
     changes = []
     for entity_id, entity_info in restructurer.entities.items():
         if entity_info.get("device_id") != device_id:
@@ -2604,6 +2606,8 @@ def _plan_device_entity_changes(
             states_by_id.get(entity_id, {}),
             preserved_entity_names.get(entity_id),
         )
+        if entity_id in preserved_user_names:
+            new_friendly_name = preserved_user_names[entity_id]
         changes.append((entity_id, new_entity_id, new_friendly_name))
     return changes
 
@@ -2616,9 +2620,22 @@ def _capture_device_entity_names(
     """Capture entity-specific names before changing their device name."""
     states_by_id = {state["entity_id"]: state for state in states}
     return {
-        entity_id: restructurer.build_naming_context(entity_id, states_by_id.get(entity_id, {}))["entity"]
+        entity_id: (
+            entity_info.get("name")
+            if entity_info.get("name") is not None
+            else restructurer.build_naming_context(entity_id, states_by_id.get(entity_id, {}))["entity"]
+        )
         for entity_id, entity_info in restructurer.entities.items()
         if entity_info.get("device_id") == device_id
+    }
+
+
+def _capture_device_user_names(restructurer: EntityRestructurer, device_id: str) -> dict[str, str]:
+    """Capture explicit HA entity-name overrides so device renames preserve them."""
+    return {
+        entity_id: entity_info["name"]
+        for entity_id, entity_info in restructurer.entities.items()
+        if entity_info.get("device_id") == device_id and entity_info.get("name") is not None
     }
 
 
@@ -2657,6 +2674,7 @@ async def rename_device_handler(job, ctx):
             device_id,
             cached_states,
         )
+        preserved_user_names = _capture_device_user_names(renamer_state["restructurer"], device_id)
 
         device_registry = DeviceRegistry(ws)
         success = await device_registry.rename_device(device_id, new_name)
@@ -2692,6 +2710,7 @@ async def rename_device_handler(job, ctx):
             device_id,
             cached_states,
             preserved_entity_names,
+            preserved_user_names,
         )
 
         total = len(entity_changes)
@@ -3072,7 +3091,9 @@ async def _get_hierarchy_async():
             original_name = entity_data.get("name") or entity_data.get("original_name") or ""
 
             entity_context = restructurer.build_naming_context(entity_id, entity_data)
-            base_name = entity_context["entity"]
+            native_base_name = entity_context["entity"]
+            user_name = entity_data.get("name")
+            base_name = user_name if user_name is not None else native_base_name
 
             suggested_entity_id, suggested_entity_name = restructurer.generate_new_entity_id(entity_id, entity_data)
 
@@ -3084,7 +3105,9 @@ async def _get_hierarchy_async():
                     "area_id": area_id,
                     "device_class": device_class,
                     "original_name": original_name,  # Original HA friendly name
+                    "user_name": user_name,  # Explicit HA entity-name override, or None
                     "base_name": base_name,  # Stripped base name for editing
+                    "native_base_name": native_base_name,  # Used by the explicit reset/revert action
                     "suggested_name": suggested_entity_name,
                     "suggested_entity_id": suggested_entity_id,
                     "override_name": override.get("name") if override else None,

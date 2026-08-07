@@ -2103,7 +2103,7 @@
                                                 <button @click="learnSuffixMapping(entity)"
                                                         class="btn btn-ghost btn-sm"
                                                         :title="t('entity.learn_mapping')">
-                                                    <i :class="suffixMappings[(entity.base_name||'').toLowerCase().trim()] ? 'ri-star-fill text-amber-500' : 'ri-star-line'"></i>
+                                                    <i :class="hasUserSuffixMapping(entity) ? 'ri-star-fill text-amber-500' : 'ri-star-line'"></i>
                                                 </button>
                                             </div>
                                             <span x-show="isEntityIdTaken(entity)" class="text-red-500 text-xs">
@@ -4038,10 +4038,15 @@
                                 new_id: rendered.entity_id,
                                 old_name: entry.entity.original_name ?? '',
                                 new_name: rendered.entity_name,
+                                user_name: entry.entity.user_name,
+                                expected_base: entry.context.entity,
                                 registry_id: entry.entity.registry_id
                             };
                             entry.row.planned_entities.push(plan);
-                            if (plan.old_id !== plan.new_id || plan.old_name !== plan.new_name) {
+                            const nameChanged = plan.user_name !== null && plan.user_name !== undefined
+                                ? !this.sameEntityBaseName(plan.user_name, plan.expected_base)
+                                : plan.old_name !== plan.new_name;
+                            if (plan.old_id !== plan.new_id || nameChanged) {
                                 entry.row.entity_changes.push(plan);
                             }
                         });
@@ -4319,7 +4324,30 @@
                     const newName = entity._previewName ?? this.getEntityFriendlyNameForEntity(entity);
                     const newId = entity._previewId || this.getNewEntityIdForEntity(entity);
 
-                    return entity.id !== newId || entity.original_name !== newName;
+                    if (entity.id !== newId) return true;
+
+                    // HA's registry `name` is an intentional user override. Do
+                    // not try to expand it back into the full generated friendly
+                    // name; compare only its entity-specific suffix. Resetting
+                    // that override remains an explicit edit action.
+                    if (entity.user_name !== null && entity.user_name !== undefined) {
+                        return !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity));
+                    }
+
+                    return entity.original_name !== newName;
+                },
+
+                sameEntityBaseName(left, right) {
+                    const normalize = value => (value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+                    return normalize(left) === normalize(right);
+                },
+
+                entityNameForRename(entity, generatedName) {
+                    if (entity.user_name !== null && entity.user_name !== undefined &&
+                        this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity))) {
+                        return entity.user_name;
+                    }
+                    return generatedName;
                 },
 
                 // Get friendly name using entity's own device/area (not selected)
@@ -4368,9 +4396,28 @@
                     if (!this.hierarchy?.entities) return;
 
                     const pending = [];
+                    const mapped = [];
                     for (const entity of this.hierarchy.entities) {
                         // Skip if already computed (e.g. from user edit) or just renamed
                         if ((entity._previewName !== null && entity._previewName !== undefined) || entity._justRenamed) continue;
+
+                        // User mappings take priority over backend suggestions.
+                        // They are UI-managed and therefore must be supplied as
+                        // the entity context when requesting the exact preview.
+                        const domain = entity.id.split('.')[0];
+                        const mappedSuffix = this.getUserSuffixMapping(entity.base_name, domain);
+                        const explicitSuffix = mappedSuffix !== null
+                            ? mappedSuffix
+                            : (entity.user_name !== null && entity.user_name !== undefined ? entity.base_name : null);
+                        if (explicitSuffix !== null) {
+                            entity._previewName = this.renderNamingTemplate(
+                                this.namingConfig.templates.entity_name,
+                                this.entityNamingContext(entity, explicitSuffix)
+                            );
+                            entity._previewId = null;
+                            mapped.push({entity, suffix: explicitSuffix});
+                            continue;
+                        }
 
                         // Friendly-name composition stays client-side; only the slug comes
                         // from the backend (source of truth).
@@ -4381,6 +4428,18 @@
                         }
                         pending.push(entity);
                     }
+                    if (mapped.length) {
+                        Promise.all(mapped.map(item => this.previewEntityNaming(item.entity, item.suffix)))
+                            .then(results => {
+                                mapped.forEach((item, index) => {
+                                    item.entity._previewName = results[index].entity_name;
+                                    item.entity._previewId = results[index].entity_id;
+                                });
+                                this.previewVersion++;
+                            })
+                            .catch(error => console.error('Mapped entity preview failed', error));
+                    }
+
                     if (!pending.length) return;
 
                     this.fetchNormalized(pending.map(e => e._previewName)).then(slugs => {
@@ -4711,8 +4770,11 @@
                     // Use preview values if available (from expanded edit), otherwise calculate using entity's own context
                     const newId = entity._previewId || this.getNewEntityIdForEntity(entity);
                     const newName = entity._previewName ?? this.getEntityFriendlyNameForEntity(entity);
+                    const renameName = this.entityNameForRename(entity, newName);
                     const idChanged = entity.id !== newId;
-                    const nameChanged = entity.original_name !== newName;
+                    const nameChanged = entity.user_name !== null && entity.user_name !== undefined
+                        ? !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity))
+                        : entity.original_name !== newName;
 
                     if (!idChanged && !nameChanged) {
                         this.showMessage('No changes needed', 'info');
@@ -4729,7 +4791,7 @@
                             body: JSON.stringify({
                                 old_entity_id: entity.id,
                                 new_entity_id: idChanged ? newId : null,
-                                new_friendly_name: newName
+                                new_friendly_name: renameName
                             })
                         });
 
@@ -4737,7 +4799,7 @@
                         if (data.success) {
                             // Update local entity data
                             entity.id = newId;
-                            entity.original_name = newName;
+                            entity.original_name = renameName;
                             // Update base_name to the new suffix so input field shows correct value
                             if (entity._currentSuffix !== undefined) {
                                 entity.base_name = entity._currentSuffix;
@@ -4845,6 +4907,11 @@
                     return translated !== key ? translated : domain;
                 },
 
+                hasUserSuffixMapping(entity) {
+                    const domain = entity.id.split('.')[0];
+                    return this.getUserSuffixMapping(entity.base_name, domain) !== null;
+                },
+
                 // Check if there's a user suffix mapping for a base_name or domain (returns mapped value or null)
                 getUserSuffixMapping(baseName, domain = null) {
                     if (!this.suffixMappings || Object.keys(this.suffixMappings).length === 0) {
@@ -4878,6 +4945,15 @@
                             return this.suffixMappings[baseNameHyphens];
                         }
 
+                        // The entity may already contain the translated value.
+                        // Treat that reverse match as correct instead of asking
+                        // the user to translate it again.
+                        const existingTranslation = Object.values(this.suffixMappings)
+                            .find(value => this.sameEntityBaseName(value, baseName));
+                        if (existingTranslation) {
+                            return baseName.trim();
+                        }
+
                         // If base_name exists and is different from domain, don't fall back to domain mapping
                         // The base_name is valid and should be used as-is
                         if (baseNameLower !== domain?.toLowerCase()) {
@@ -4908,7 +4984,7 @@
 
                 // Revert suffix to original value (override_name intentionally ignored)
                 revertEntitySuffix(entity) {
-                    const original = entity.base_name || '';
+                    const original = entity.native_base_name ?? entity.base_name ?? '';
                     entity._currentSuffix = original;
                     this.updateEntityPreview(entity, original);
                 },
@@ -5437,7 +5513,10 @@
                     const allEntities = entitiesToChange.map(e => ({
                         old_id: e.id,
                         new_id: e._previewId || this.getNewEntityIdForEntity(e),
-                        new_name: e._previewName ?? this.getEntityFriendlyNameForEntity(e),
+                        new_name: this.entityNameForRename(
+                            e,
+                            e._previewName ?? this.getEntityFriendlyNameForEntity(e)
+                        ),
                         registry_id: e.registry_id
                     }));
                     // Capture drift device ids so the completion handler can sync them after.
