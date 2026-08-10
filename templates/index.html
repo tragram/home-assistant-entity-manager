@@ -1564,6 +1564,13 @@
                                     <div class="flex items-center justify-between">
                                         <div class="flex-1 min-w-0">
                                             <div class="flex items-center gap-2">
+                                                <input x-show="batchRename.mode"
+                                                       type="checkbox"
+                                                       class="w-4 h-4 accent-blue-600 shrink-0"
+                                                       :checked="batchAreaSelectionState(area.id).all"
+                                                       :indeterminate="batchAreaSelectionState(area.id).some"
+                                                       @click.stop="toggleBatchAreaDevices(area.id)"
+                                                       :aria-label="t('batch_rename.select_area')">
                                                 <i :class="area.isSpecial ? 'ri-question-line text-orange-500' : 'ri-map-pin-line text-blue-500'"></i>
                                                 <span class="font-medium truncate" x-text="area.name"></span>
                                             </div>
@@ -1572,6 +1579,9 @@
                                             </div>
                                         </div>
                                         <div class="flex items-center gap-2">
+                                            <span x-show="batchRename.mode && batchSelectedCountForArea(area.id) > 0"
+                                                  class="badge badge-blue"
+                                                  x-text="batchSelectedCountForArea(area.id)"></span>
                                             <span class="text-xs text-gray-500"
                                                   x-text="area.isSpecial ? area.deviceCount + ' Devices' : getAreaEntityCount(area.id)"></span>
                                             <a x-show="!area.isSpecial"
@@ -2162,6 +2172,13 @@
                 <div class="text-sm text-gray-600">
                     <span class="font-bold text-blue-600" x-text="batchRename.selected.length"></span>
                     <span x-text="t('batch_rename.devices_selected')">devices selected</span>
+                    <template x-if="batchRenameAreaCount > 0">
+                        <span>
+                            <span class="mx-1">&middot;</span>
+                            <span class="font-bold text-blue-600" x-text="batchRenameAreaCount"></span>
+                            <span x-text="t('batch_rename.areas_selected')">areas selected</span>
+                        </span>
+                    </template>
                 </div>
                 <div class="flex items-center gap-2">
                     <button @click="toggleBatchRenameMode()" class="btn btn-ghost">
@@ -2233,6 +2250,7 @@
                                     <input type="text"
                                            class="edit-input w-full"
                                            x-model="row.base_name"
+                                           @input="rememberBatchRenameDraft(row.device_id, $event.target.value)"
                                            @change="refreshBatchRenamePreviews()"
                                            :disabled="batchRename.previewing || batchRename.submitting">
                                     <div class="text-xs text-blue-600 mt-1 truncate" x-text="row.new_name"></div>
@@ -2754,6 +2772,7 @@
                     showReview: false,
                     selected: [],
                     rows: [],
+                    drafts: {},
                     previewing: false,
                     submitting: false,
                     error: ''
@@ -3919,6 +3938,7 @@
                     if (!this.batchRename.mode) {
                         this.batchRename.selected = [];
                         this.batchRename.rows = [];
+                        this.batchRename.drafts = {};
                         this.batchRename.showReview = false;
                         this.batchRename.error = '';
                     }
@@ -3936,16 +3956,44 @@
                     }
                 },
 
+                batchDevicesForArea(areaId) {
+                    return this.hierarchy.devices
+                        .filter(device => areaId === '__no_area__' ? !device.area_id : device.area_id === areaId)
+                        .filter(device => this.showDisabled || !device.disabled_by)
+                        .filter(device => !this.onlyChanges || this.deviceNeedsRename(device));
+                },
+
+                batchSelectedCountForArea(areaId) {
+                    return this.batchDevicesForArea(areaId)
+                        .filter(device => this.isBatchDeviceSelected(device.id)).length;
+                },
+
+                batchAreaSelectionState(areaId) {
+                    const devices = this.batchDevicesForArea(areaId);
+                    const selected = devices.filter(device => this.isBatchDeviceSelected(device.id)).length;
+                    return {
+                        all: devices.length > 0 && selected === devices.length,
+                        some: selected > 0 && selected < devices.length
+                    };
+                },
+
+                toggleBatchAreaDevices(areaId) {
+                    const deviceIds = this.batchDevicesForArea(areaId).map(device => device.id);
+                    if (!deviceIds.length) return;
+                    const areaIds = new Set(deviceIds);
+                    const allSelected = deviceIds.every(id => this.isBatchDeviceSelected(id));
+                    this.batchRename.selected = allSelected
+                        ? this.batchRename.selected.filter(id => !areaIds.has(id))
+                        : [...new Set([...this.batchRename.selected, ...deviceIds])];
+                },
+
                 selectVisibleBatchDevices() {
                     const visibleIds = this.filteredDevices.map(device => device.id);
                     this.batchRename.selected = [...new Set([...this.batchRename.selected, ...visibleIds])];
                 },
 
                 selectAreaBatchDevices() {
-                    const areaIds = this.hierarchy.devices
-                        .filter(device => this.selectedArea === '__no_area__' ? !device.area_id : device.area_id === this.selectedArea)
-                        .filter(device => this.showDisabled || !device.disabled_by)
-                        .map(device => device.id);
+                    const areaIds = this.batchDevicesForArea(this.selectedArea).map(device => device.id);
                     this.batchRename.selected = [...new Set([...this.batchRename.selected, ...areaIds])];
                 },
 
@@ -3969,10 +4017,11 @@
 
                     this.batchRename.rows = devices.map(device => {
                         const area = this.hierarchy.areas.find(item => item.id === device.area_id);
+                        const hasDraft = Object.prototype.hasOwnProperty.call(this.batchRename.drafts, device.id);
                         return {
                             device_id: device.id,
                             current_name: device.name,
-                            base_name: device.base_name || '',
+                            base_name: hasDraft ? this.batchRename.drafts[device.id] : (device.base_name || ''),
                             new_name: device.name,
                             area_name: area?.name || '',
                             entity_changes: [],
@@ -3984,6 +4033,13 @@
                     });
                     this.batchRename.showReview = true;
                     await this.refreshBatchRenamePreviews();
+                },
+
+                rememberBatchRenameDraft(deviceId, baseName) {
+                    this.batchRename.drafts = {
+                        ...this.batchRename.drafts,
+                        [deviceId]: baseName
+                    };
                 },
 
                 closeBatchRenameReview() {
@@ -4091,6 +4147,14 @@
                     return this.batchRename.rows.filter(row => row.has_changes);
                 },
 
+                get batchRenameAreaCount() {
+                    const areaIds = this.batchRename.selected
+                        .map(deviceId => this.hierarchy.devices.find(device => device.id === deviceId))
+                        .filter(Boolean)
+                        .map(device => device.area_id || '__no_area__');
+                    return new Set(areaIds).size;
+                },
+
                 get batchRenameHasConflicts() {
                     return this.batchRename.rows.some(row => row.conflicts?.length);
                 },
@@ -4136,6 +4200,7 @@
                     this.batchRename.mode = false;
                     this.batchRename.selected = [];
                     this.batchRename.rows = [];
+                    this.batchRename.drafts = {};
                     await this.loadHierarchy();
                 },
 

@@ -186,6 +186,7 @@
     "select_area": "Select area",
     "select_floor": "Select floor",
     "devices_selected": "devices selected",
+    "areas_selected": "areas selected",
     "review_changes": "Review changes",
     "review_title": "Review device renames",
     "building_preview": "Building preview…",
