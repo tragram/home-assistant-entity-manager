@@ -1799,6 +1799,16 @@
                             <i class="ri-check-line"></i>
                         </button>
                     </div>
+                    <label class="flex items-start gap-2 mt-2 text-xs text-gray-600 cursor-pointer">
+                        <input type="checkbox"
+                               class="w-4 h-4 mt-0.5 accent-blue-600 shrink-0"
+                               x-model="resetEntityIds"
+                               :disabled="renamingDevice || applyingEntityId || executing">
+                        <span>
+                            <span class="font-medium block" x-text="t('device.reset_entity_ids')">Reset all entity IDs</span>
+                            <span class="text-gray-500" x-text="t('device.reset_entity_ids_hint')">Recreate IDs from the current naming templates while preserving entity names.</span>
+                        </span>
+                    </label>
                     <!-- Z2M-Namens-Drift: Z2M-friendly_name weicht vom HA-Namen ab -->
                     <div x-show="selectedDeviceData?.z2m_drift" class="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
                         <div class="flex items-center justify-between gap-2">
@@ -2222,6 +2232,17 @@
                             <span x-text="batchRename.rows.length"></span>
                             <span x-text="t('batch_rename.devices_selected')">devices selected</span>
                         </p>
+                        <label class="flex items-start gap-2 mt-2 text-xs text-gray-600 cursor-pointer">
+                            <input type="checkbox"
+                                   class="w-4 h-4 mt-0.5 accent-blue-600 shrink-0"
+                                   x-model="batchRename.resetEntityIds"
+                                   @change="refreshBatchRenamePreviews()"
+                                   :disabled="batchRename.previewing || batchRename.submitting">
+                            <span>
+                                <span class="font-medium block" x-text="t('device.reset_entity_ids')">Reset all entity IDs</span>
+                                <span class="text-gray-500" x-text="t('device.reset_entity_ids_hint')">Recreate IDs from the current naming templates while preserving entity names.</span>
+                            </span>
+                        </label>
                     </div>
                     <button @click="closeBatchRenameReview()" class="btn btn-ghost btn-sm">
                         <i class="ri-close-line"></i>
@@ -2763,6 +2784,7 @@
                 selectedDeviceData: null,
                 selectedEntityData: null,
                 devicePreviewBaseName: null,  // Temporary preview while editing device name
+                resetEntityIds: false,
                 renamingDevice: false,  // Loading state for device rename
                 syncingZ2m: false,  // Loading state for Z2M name sync
                 applyingEntityId: null,  // ID of entity currently being renamed
@@ -2773,6 +2795,7 @@
                     selected: [],
                     rows: [],
                     drafts: {},
+                    resetEntityIds: false,
                     previewing: false,
                     submitting: false,
                     error: ''
@@ -3911,6 +3934,7 @@
                     this.selectedDevice = null;
                     this.selectedDeviceData = null;
                     this.devicePreviewBaseName = null;  // Clear preview when switching areas
+                    this.resetEntityIds = false;
                     this.deviceFilter = '';  // Reset device filter
                     this.saveState();
 
@@ -3925,6 +3949,7 @@
                     this.selectedDevice = device.id;
                     this.selectedDeviceData = device;
                     this.devicePreviewBaseName = null;  // Clear preview when switching devices
+                    this.resetEntityIds = false;
                     this.saveState();
 
                     // Mobile: Navigate to entities
@@ -3939,6 +3964,7 @@
                         this.batchRename.selected = [];
                         this.batchRename.rows = [];
                         this.batchRename.drafts = {};
+                        this.batchRename.resetEntityIds = false;
                         this.batchRename.showReview = false;
                         this.batchRename.error = '';
                     }
@@ -4066,7 +4092,10 @@
                                 context: this.deviceNamingContext(device, row.base_name.trim())
                             });
                             for (const entity of entities) {
-                                const context = this.entityNamingContext(entity);
+                                const resetSuffix = this.batchRename.resetEntityIds
+                                    ? (entity.native_base_name ?? entity.base_name ?? '')
+                                    : null;
+                                const context = this.entityNamingContext(entity, resetSuffix);
                                 context.device = row.base_name.trim();
                                 entries.push({row, entity, kind: 'entity', context});
                             }
@@ -4170,7 +4199,8 @@
                             body: JSON.stringify({
                                 devices: this.batchRenameReadyRows.map(row => ({
                                     device_id: row.device_id,
-                                    new_name: row.new_name
+                                    new_name: row.new_name,
+                                    reset_entity_ids: this.batchRename.resetEntityIds
                                 }))
                             })
                         });
@@ -4201,13 +4231,18 @@
                     this.batchRename.selected = [];
                     this.batchRename.rows = [];
                     this.batchRename.drafts = {};
+                    this.batchRename.resetEntityIds = false;
                     await this.loadHierarchy();
                 },
 
                 async retryFailedBatchDevices(job) {
                     const devices = (job?.result?.devices || [])
                         .filter(device => device.status === 'failed')
-                        .map(device => ({device_id: device.device_id, new_name: device.new_name}));
+                        .map(device => ({
+                            device_id: device.device_id,
+                            new_name: device.new_name,
+                            reset_entity_ids: device.reset_entity_ids === true
+                        }));
                     if (!devices.length) return;
                     try {
                         const response = await fetch('api/rename_devices', {
@@ -4234,6 +4269,7 @@
                     this.selectedDevice = virtualDeviceId;
                     this.selectedDeviceData = null;
                     this.devicePreviewBaseName = null;  // Clear preview when switching devices
+                    this.resetEntityIds = false;
                     this.saveState();
 
                     // Mobile: Navigate to entities
@@ -5450,6 +5486,7 @@
                         this.showMessage(r.message || 'Device renamed', (r.entities_failed > 0) ? 'error' : 'success', true);
                     }
                     this.devicePreviewBaseName = null;
+                    this.resetEntityIds = false;
                     await this.loadHierarchy();
                     const id = deviceId || this.selectedDevice;
                     if (id) {
@@ -5463,7 +5500,7 @@
 
                     const newFullName = this.renderDeviceName(this.selectedDeviceData, newBaseName);
 
-                    if (this.selectedDeviceData.name === newFullName) {
+                    if (this.selectedDeviceData.name === newFullName && !this.resetEntityIds) {
                         this.showMessage('Device name already correct', 'info');
                         return;
                     }
@@ -5476,7 +5513,8 @@
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({
                                 device_id: this.selectedDevice,
-                                new_name: newFullName
+                                new_name: newFullName,
+                                reset_entity_ids: this.resetEntityIds
                             })
                         });
                         const job = await response.json();

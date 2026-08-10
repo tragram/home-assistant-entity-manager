@@ -177,7 +177,9 @@
     "select_device": "Sélectionner un appareil",
     "select_area": "Sélectionner une zone",
     "disabled_badge": "désactivé",
-    "filter_placeholder": "Filtrer les appareils..."
+    "filter_placeholder": "Filtrer les appareils...",
+    "reset_entity_ids": "Réinitialiser tous les ID d’entité",
+    "reset_entity_ids_hint": "Recréer les ID avec les modèles de nommage actuels tout en conservant les noms d’entité."
   },
   "batch_rename": {
     "select_devices": "Sélectionner des appareils",

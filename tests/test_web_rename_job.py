@@ -32,6 +32,24 @@ def test_rename_device_enqueues_job(client):
     assert store.load(body["job_id"])["payload"] == {"device_id": "dev1", "new_name": "Kitchen Light"}
 
 
+def test_rename_device_enqueues_entity_id_reset(client):
+    """Single-device renames can explicitly rebuild every entity ID."""
+    c, store = client
+
+    response = c.post(
+        "/api/rename_device",
+        json={"device_id": "dev1", "new_name": "Kitchen Light", "reset_entity_ids": True},
+    )
+
+    assert response.status_code == 202
+    job = response.get_json()
+    assert store.load(job["job_id"])["payload"] == {
+        "device_id": "dev1",
+        "new_name": "Kitchen Light",
+        "reset_entity_ids": True,
+    }
+
+
 def test_rename_device_missing_field_is_400(client):
     c, _ = client
     resp = c.post("/api/rename_device", json={"device_id": "dev1"})
@@ -62,7 +80,7 @@ def test_batch_device_rename_enqueues_sanitized_changes(client):
         "/api/rename_devices",
         json={
             "devices": [
-                {"device_id": "dev1", "new_name": " Hall Lamp "},
+                {"device_id": "dev1", "new_name": " Hall Lamp ", "reset_entity_ids": True},
                 {"device_id": "dev2", "new_name": "Kitchen Lamp"},
             ]
         },
@@ -72,7 +90,7 @@ def test_batch_device_rename_enqueues_sanitized_changes(client):
     job = response.get_json()
     assert job["type"] == "rename_devices"
     assert store.load(job["job_id"])["payload"]["devices"] == [
-        {"device_id": "dev1", "new_name": "Hall Lamp"},
+        {"device_id": "dev1", "new_name": "Hall Lamp", "reset_entity_ids": True},
         {"device_id": "dev2", "new_name": "Kitchen Lamp"},
     ]
 
@@ -171,6 +189,35 @@ def test_device_rename_plan_uses_shared_naming_generator() -> None:
     assert web_ui._plan_device_entity_changes(FakeRestructurer(), "dev1", states) == [
         ("event.old_left", "event.hall_wall_switch_button_left", "Button Left"),
         ("event.old_right", "event.hall_wall_switch_button_right", "Button Right"),
+    ]
+
+
+def test_device_rename_plan_can_reset_ids_without_resetting_user_names() -> None:
+    """ID reset uses native naming context while preserving explicit HA names."""
+
+    class FakeRestructurer:
+        entities = {"sensor.custom_id": {"device_id": "dev1"}}
+
+        def generate_new_entity_id(
+            self,
+            entity_id: str,
+            state: dict,
+            entity_name: str | None = None,
+        ) -> tuple[str, str]:
+            suffix = entity_name or state["attributes"]["native_name"]
+            return f"sensor.kitchen_{suffix.lower().replace(' ', '_')}", suffix
+
+    changes = web_ui._plan_device_entity_changes(
+        FakeRestructurer(),
+        "dev1",
+        [{"entity_id": "sensor.custom_id", "attributes": {"native_name": "Temperature"}}],
+        {"sensor.custom_id": "Custom suffix"},
+        {"sensor.custom_id": "My displayed temperature"},
+        reset_entity_ids=True,
+    )
+
+    assert changes == [
+        ("sensor.custom_id", "sensor.kitchen_temperature", "My displayed temperature")
     ]
 
 

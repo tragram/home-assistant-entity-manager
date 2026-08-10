@@ -177,7 +177,9 @@
     "select_device": "Gerät auswählen",
     "select_area": "Bereich auswählen",
     "disabled_badge": "deaktiviert",
-    "filter_placeholder": "Geräte filtern..."
+    "filter_placeholder": "Geräte filtern...",
+    "reset_entity_ids": "Alle Entitäts-IDs zurücksetzen",
+    "reset_entity_ids_hint": "IDs aus den aktuellen Namensvorlagen neu erstellen und Entitätsnamen beibehalten."
   },
   "batch_rename": {
     "select_devices": "Geräte auswählen",

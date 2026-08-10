@@ -2516,7 +2516,10 @@ def rename_device():
                 409,
             )
 
-    job = new_job("rename_device", {"device_id": device_id, "new_name": new_name}, job_id=uuid.uuid4().hex)
+    payload: dict[str, Any] = {"device_id": device_id, "new_name": new_name}
+    if data.get("reset_entity_ids") is True:
+        payload["reset_entity_ids"] = True
+    job = new_job("rename_device", payload, job_id=uuid.uuid4().hex)
     renamer_state["job_store"].save(job)
     renamer_state["worker"].enqueue(job)
     return jsonify(job), 202
@@ -2533,7 +2536,7 @@ def _job_device_ids(job: dict[str, Any]) -> set[str]:
     return set()
 
 
-def _validated_device_renames(data: Any) -> tuple[Optional[list[dict[str, str]]], Optional[str]]:
+def _validated_device_renames(data: Any) -> tuple[Optional[list[dict[str, Any]]], Optional[str]]:
     """Validate and sanitize a multi-device rename request."""
     if not isinstance(data, dict) or not isinstance(data.get("devices"), list):
         return None, "devices must be a list"
@@ -2554,7 +2557,10 @@ def _validated_device_renames(data: Any) -> tuple[Optional[list[dict[str, str]]]
         if device_id in seen:
             return None, f"Device {device_id} appears more than once"
         seen.add(device_id)
-        devices.append({"device_id": device_id, "new_name": new_name})
+        device: dict[str, Any] = {"device_id": device_id, "new_name": new_name}
+        if item.get("reset_entity_ids") is True:
+            device["reset_entity_ids"] = True
+        devices.append(device)
     return devices, None
 
 
@@ -2592,6 +2598,7 @@ def _plan_device_entity_changes(
     states: list[dict[str, Any]],
     preserved_entity_names: Optional[dict[str, str]] = None,
     preserved_user_names: Optional[dict[str, str]] = None,
+    reset_entity_ids: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Generate template-based entity changes for a renamed device."""
     states_by_id = {state["entity_id"]: state for state in states}
@@ -2604,7 +2611,7 @@ def _plan_device_entity_changes(
         new_entity_id, new_friendly_name = restructurer.generate_new_entity_id(
             entity_id,
             states_by_id.get(entity_id, {}),
-            preserved_entity_names.get(entity_id),
+            None if reset_entity_ids else preserved_entity_names.get(entity_id),
         )
         if entity_id in preserved_user_names:
             new_friendly_name = preserved_user_names[entity_id]
@@ -2651,6 +2658,7 @@ async def rename_device_handler(job, ctx):
     payload = job["payload"]
     device_id = payload["device_id"]
     new_name = payload["new_name"]
+    reset_entity_ids = payload.get("reset_entity_ids") is True
 
     base_url = os.getenv("HA_URL")
     token = os.getenv("HA_TOKEN")
@@ -2677,7 +2685,12 @@ async def rename_device_handler(job, ctx):
         preserved_user_names = _capture_device_user_names(renamer_state["restructurer"], device_id)
 
         device_registry = DeviceRegistry(ws)
-        success = await device_registry.rename_device(device_id, new_name)
+        device_info = getattr(renamer_state["restructurer"], "devices", {}).get(device_id, {})
+        current_device_name = (
+            device_info.get("name_by_user") or device_info.get("name") or device_info.get("model") or ""
+        )
+        device_name_changed = not device_info or current_device_name != new_name
+        success = await device_registry.rename_device(device_id, new_name) if device_name_changed else True
 
         if not success:
             raise RuntimeError("Failed to rename device in Home Assistant")
@@ -2685,9 +2698,11 @@ async def rename_device_handler(job, ctx):
         # Align the Z2M friendly name with the new name (Z2M devices only, non-fatal)
         z2m_sync = await _sync_z2m_name(device_registry, device_id, new_name)
 
-        # Reload after the device update so the shared naming generator sees the
-        # new device name and applies the active templates to every entity.
-        await renamer_state["restructurer"].load_structure(ws)
+        # Reload after a device update so the shared naming generator sees the
+        # new name. A reset-only run deliberately avoids writing an unnecessary
+        # name_by_user override when the device name itself is unchanged.
+        if device_name_changed:
+            await renamer_state["restructurer"].load_structure(ws)
 
         # Update entities: rename ID + friendly name + update dependencies
         entities_updated = 0
@@ -2711,6 +2726,7 @@ async def rename_device_handler(job, ctx):
             cached_states,
             preserved_entity_names,
             preserved_user_names,
+            reset_entity_ids,
         )
 
         total = len(entity_changes)
@@ -2869,6 +2885,7 @@ async def rename_devices_handler(job: dict[str, Any], ctx: Any) -> dict[str, Any
                 {
                     "device_id": device_id,
                     "new_name": new_name,
+                    "reset_entity_ids": item.get("reset_entity_ids") is True,
                     "status": status,
                     "result": result,
                 }
@@ -2881,6 +2898,7 @@ async def rename_devices_handler(job: dict[str, Any], ctx: Any) -> dict[str, Any
                 {
                     "device_id": device_id,
                     "new_name": new_name,
+                    "reset_entity_ids": item.get("reset_entity_ids") is True,
                     "status": "failed",
                     "error": str(error),
                 }

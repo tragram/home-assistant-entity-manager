@@ -177,7 +177,9 @@
     "select_device": "Seleccionar un dispositivo",
     "select_area": "Seleccionar un área",
     "disabled_badge": "desactivado",
-    "filter_placeholder": "Filtrar dispositivos..."
+    "filter_placeholder": "Filtrar dispositivos...",
+    "reset_entity_ids": "Restablecer todos los ID de entidad",
+    "reset_entity_ids_hint": "Volver a crear los ID con las plantillas de nombres actuales conservando los nombres de entidad."
   },
   "batch_rename": {
     "select_devices": "Seleccionar dispositivos",
