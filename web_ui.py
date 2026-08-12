@@ -2605,18 +2605,68 @@ def _plan_device_entity_changes(
     preserved_entity_names = preserved_entity_names or {}
     preserved_user_names = preserved_user_names or {}
     changes = []
-    for entity_id, entity_info in restructurer.entities.items():
-        if entity_info.get("device_id") != device_id:
-            continue
-        new_entity_id, new_friendly_name = restructurer.generate_new_entity_id(
+    for entity_id in _device_entity_scope(restructurer, device_id):
+        entity_info = restructurer.entities[entity_id]
+        generation_args = (
             entity_id,
             states_by_id.get(entity_id, {}),
             None if reset_entity_ids else preserved_entity_names.get(entity_id),
         )
+        if entity_info.get("device_id") == device_id:
+            new_entity_id, new_friendly_name = restructurer.generate_new_entity_id(*generation_args)
+        else:
+            # Helpers such as switch_as_x intentionally have no device of
+            # their own. Generate their names with the source device context.
+            new_entity_id, new_friendly_name = restructurer.generate_new_entity_id(
+                *generation_args,
+                device_id=device_id,
+            )
         if not reset_entity_ids and entity_id in preserved_user_names:
             new_friendly_name = preserved_user_names[entity_id]
         changes.append((entity_id, new_entity_id, new_friendly_name))
     return changes
+
+
+def _object_references_any(value: Any, references: set[str]) -> bool:
+    """Return whether nested helper options point at a source entity."""
+    if isinstance(value, str):
+        return value in references
+    if isinstance(value, dict):
+        return any(_object_references_any(item, references) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_object_references_any(item, references) for item in value)
+    return False
+
+
+def _device_entity_scope(restructurer: EntityRestructurer, device_id: str) -> list[str]:
+    """Return native and helper entities associated with one device."""
+    entity_ids = {
+        entity_id
+        for entity_id, entity_info in restructurer.entities.items()
+        if entity_info.get("device_id") == device_id
+    }
+    references = entity_ids | {
+        entity_info.get("id")
+        for entity_id, entity_info in restructurer.entities.items()
+        if entity_id in entity_ids and entity_info.get("id")
+    }
+
+    # Helper chains are possible (a helper can wrap another helper), so keep
+    # expanding until no entity options reference the current scope.
+    changed = True
+    while changed:
+        changed = False
+        for entity_id, entity_info in restructurer.entities.items():
+            if entity_id in entity_ids or not _object_references_any(entity_info.get("options", {}), references):
+                continue
+            entity_ids.add(entity_id)
+            references.add(entity_id)
+            if entity_info.get("id"):
+                references.add(entity_info["id"])
+            changed = True
+
+    # Preserve registry order so previews and rename jobs stay deterministic.
+    return [entity_id for entity_id in restructurer.entities if entity_id in entity_ids]
 
 
 def _capture_device_entity_names(
@@ -2626,23 +2676,27 @@ def _capture_device_entity_names(
 ) -> dict[str, str]:
     """Capture entity-specific names before changing their device name."""
     states_by_id = {state["entity_id"]: state for state in states}
-    return {
-        entity_id: (
-            entity_info.get("name")
-            if entity_info.get("name") is not None
-            else restructurer.build_naming_context(entity_id, states_by_id.get(entity_id, {}))["entity"]
-        )
-        for entity_id, entity_info in restructurer.entities.items()
-        if entity_info.get("device_id") == device_id
-    }
+    names = {}
+    for entity_id in _device_entity_scope(restructurer, device_id):
+        entity_info = restructurer.entities[entity_id]
+        if entity_info.get("name") is not None:
+            names[entity_id] = entity_info["name"]
+            continue
+        context_args = (entity_id, states_by_id.get(entity_id, {}))
+        if entity_info.get("device_id") == device_id:
+            context = restructurer.build_naming_context(*context_args)
+        else:
+            context = restructurer.build_naming_context(*context_args, device_id=device_id)
+        names[entity_id] = context["entity"]
+    return names
 
 
 def _capture_device_user_names(restructurer: EntityRestructurer, device_id: str) -> dict[str, str]:
     """Capture explicit HA entity-name overrides so device renames preserve them."""
     return {
         entity_id: entity_info["name"]
-        for entity_id, entity_info in restructurer.entities.items()
-        if entity_info.get("device_id") == device_id and entity_info.get("name") is not None
+        for entity_id in _device_entity_scope(restructurer, device_id)
+        if (entity_info := restructurer.entities[entity_id]).get("name") is not None
     }
 
 

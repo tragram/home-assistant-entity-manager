@@ -260,11 +260,16 @@ class EntityRestructurer:
 
         return "sensor"  # Default
 
-    def build_naming_context(self, entity_id: str, state_info: Dict[str, Any]) -> Dict[str, str]:
+    def build_naming_context(
+        self,
+        entity_id: str,
+        state_info: Dict[str, Any],
+        device_id: Optional[str] = None,
+    ) -> Dict[str, str]:
         """Build the complete template context for an entity."""
         domain, _, object_id = entity_id.partition(".")
         entity_reg = self.entities.get(entity_id, {})
-        device_id = entity_reg.get("device_id") or ""
+        device_id = device_id or entity_reg.get("device_id") or ""
         device = self.devices.get(device_id, {}) if device_id else {}
 
         area_id = entity_reg.get("area_id") or device.get("area_id") or ""
@@ -412,10 +417,11 @@ class EntityRestructurer:
         entity_id: str,
         state_info: Dict[str, Any],
         entity_name: Optional[str] = None,
+        device_id: Optional[str] = None,
     ) -> Tuple[str, str]:
         """Generate an entity ID and entity-registry name from active templates."""
         domain = entity_id.split(".", 1)[0]
-        context = self.build_naming_context(entity_id, state_info)
+        context = self.build_naming_context(entity_id, state_info, device_id=device_id)
         if entity_name is not None:
             context["entity"] = entity_name
         object_id = self.naming_templates.render("entity_id", context, normalize=True)

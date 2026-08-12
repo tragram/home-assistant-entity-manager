@@ -219,6 +219,59 @@ def test_device_rename_plan_resets_ids_and_names() -> None:
     assert changes == [("sensor.custom_id", "sensor.kitchen_temperature", "Temperature")]
 
 
+def test_device_rename_includes_switch_as_light_helper() -> None:
+    """A device rename includes helpers linked by source entity ID or registry UUID."""
+
+    class FakeRestructurer:
+        entities = {
+            "switch.kitchen_plug": {"device_id": "dev1", "id": "source-registry-id"},
+            "light.kitchen_plug": {
+                "device_id": None,
+                "id": "helper-registry-id",
+                "platform": "switch_as_x",
+                "options": {
+                    "switch_as_x": {
+                        "entity_id": "source-registry-id",
+                        "invert": False,
+                    }
+                },
+                "original_name": "Plug",
+            },
+            "sensor.unrelated": {
+                "device_id": None,
+                "options": {"example": {"entity_id": "sensor.elsewhere"}},
+            },
+        }
+
+        def build_naming_context(self, entity_id: str, state: dict, device_id: str | None = None) -> dict[str, str]:
+            assert entity_id != "light.kitchen_plug" or device_id == "dev1"
+            return {"entity": "Plug"}
+
+        def generate_new_entity_id(
+            self,
+            entity_id: str,
+            state: dict,
+            entity_name: str | None = None,
+            device_id: str | None = None,
+        ) -> tuple[str, str]:
+            assert entity_id != "light.kitchen_plug" or device_id == "dev1"
+            domain = entity_id.partition(".")[0]
+            return f"{domain}.dining_room_plug", entity_name or "Plug"
+
+    restructurer = FakeRestructurer()
+    states = [
+        {"entity_id": "switch.kitchen_plug", "attributes": {}},
+        {"entity_id": "light.kitchen_plug", "attributes": {}},
+    ]
+    names = web_ui._capture_device_entity_names(restructurer, "dev1", states)
+
+    assert names == {"switch.kitchen_plug": "Plug", "light.kitchen_plug": "Plug"}
+    assert web_ui._plan_device_entity_changes(restructurer, "dev1", states, names) == [
+        ("switch.kitchen_plug", "switch.dining_room_plug", "Plug"),
+        ("light.kitchen_plug", "light.dining_room_plug", "Plug"),
+    ]
+
+
 def test_device_rename_preserves_names_captured_before_device_change() -> None:
     """Same-domain entities remain distinct after their device name changes."""
 
