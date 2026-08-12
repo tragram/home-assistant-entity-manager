@@ -32,6 +32,20 @@ def test_rename_device_enqueues_job(client):
     assert store.load(body["job_id"])["payload"] == {"device_id": "dev1", "new_name": "Kitchen Light"}
 
 
+def test_blank_entity_override_does_not_match_cleared_name() -> None:
+    """Apply All must send the repair from an explicit blank override to null."""
+    assert web_ui._entity_registry_name_matches({"name": "", "original_name": None}, "") is False
+    assert web_ui._entity_registry_name_matches({"name": None, "original_name": None}, "") is True
+
+
+def test_entity_name_match_prefers_user_override() -> None:
+    """A user override, including a stale one, takes precedence over the native name."""
+    entity = {"name": "Old custom name", "original_name": "Firmware"}
+
+    assert web_ui._entity_registry_name_matches(entity, "Firmware") is False
+    assert web_ui._entity_registry_name_matches(entity, "Old custom name") is True
+
+
 def test_rename_device_enqueues_entity_id_reset(client):
     """Single-device renames can explicitly rebuild every entity ID."""
     c, store = client

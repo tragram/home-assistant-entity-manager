@@ -328,6 +328,29 @@ class EntityRestructurer:
                 name = name[len(prefix) :].strip()
         return name
 
+    @staticmethod
+    def strip_entity_hierarchy(name: str, prefixes: Tuple[str, ...]) -> str:
+        """Strip area/device components accidentally stored as an entity suffix.
+
+        Older integrations and previous Entity Manager versions can leave a
+        main entity with its complete computed display name (for example,
+        ``Area Device``) in the registry ``name`` field.  Remove every known
+        leading hierarchy component so the main entity becomes the intentional
+        empty suffix used by Home Assistant's entity-name model.
+        """
+        result = name.strip()
+        known_prefixes = tuple(prefix.strip() for prefix in prefixes if prefix and prefix.strip())
+        changed = True
+        while result and changed:
+            changed = False
+            for prefix in known_prefixes:
+                if result.casefold() == prefix.casefold():
+                    return ""
+                if result.casefold().startswith(prefix.casefold() + " "):
+                    result = result[len(prefix) :].strip()
+                    changed = True
+        return result
+
     def _base_entity_name(
         self,
         entity_id: str,
@@ -351,18 +374,11 @@ class EntityRestructurer:
             # name of their main entity. Treat it as an empty entity suffix;
             # otherwise a reset repeatedly produces "Device Device" IDs and
             # immediately proposes the same rename again after reloading.
-            for prefix in filter(None, prefixes):
-                if name.lower() == prefix.lower():
-                    return ""
-            return name
+            return self.strip_entity_hierarchy(name, prefixes)
 
         name = state.get("attributes", {}).get("friendly_name")
         if name is not None:
-            for prefix in filter(None, prefixes):
-                if name.lower() == prefix.lower():
-                    name = ""
-                elif name.lower().startswith(prefix.lower() + " "):
-                    name = name[len(prefix) :].strip()
+            name = self.strip_entity_hierarchy(name, prefixes)
             if name:
                 return name
 

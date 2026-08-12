@@ -1419,11 +1419,13 @@ async def execute_direct_handler(job, ctx):
             try:
                 # Check if entity is disabled and if we should enable it
                 entity_reg = renamer_state["restructurer"].entities.get(old_id, {})
-                current_name = entity_reg.get("original_name") or entity_reg.get("name")
+                current_name = entity_reg.get("name")
+                if current_name is None:
+                    current_name = entity_reg.get("original_name")
 
                 # Skip only if BOTH ID and name are unchanged
                 id_unchanged = old_id == new_id
-                name_unchanged = friendly_name == current_name
+                name_unchanged = _entity_registry_name_matches(entity_reg, friendly_name)
                 if id_unchanged and name_unchanged:
                     results["skipped"].append({"entity_id": old_id, "reason": "No change needed"})
                     ctx.progress(index + 1, total, current=old_id)
@@ -2627,6 +2629,20 @@ def _plan_device_entity_changes(
     return changes
 
 
+def _entity_registry_name_matches(entity_info: dict[str, Any], desired_name: Optional[str]) -> bool:
+    """Return whether HA already stores the requested entity-name state.
+
+    An empty generated name means "remove the user override".  A registry
+    ``name`` of ``""`` is still an explicit override and therefore needs an
+    update to JSON null; it must not be treated as equivalent to no override.
+    """
+    user_name = entity_info.get("name")
+    if desired_name == "":
+        return user_name is None
+    current_name = user_name if user_name is not None else entity_info.get("original_name")
+    return desired_name == current_name
+
+
 def _object_references_any(value: Any, references: set[str]) -> bool:
     """Return whether nested helper options point at a source entity."""
     if isinstance(value, str):
@@ -2792,8 +2808,8 @@ async def rename_device_handler(job, ctx):
             logger.info(f"  {old_entity_id} -> {new_entity_id} ('{new_friendly_name}')")
 
             # Skip if nothing would change
-            current_name = renamer_state["restructurer"].entities[old_entity_id].get("name")
-            name_unchanged = current_name is None if new_friendly_name == "" else new_friendly_name == current_name
+            entity_info = renamer_state["restructurer"].entities[old_entity_id]
+            name_unchanged = _entity_registry_name_matches(entity_info, new_friendly_name)
             if new_entity_id == old_entity_id and name_unchanged:
                 logger.info("  Skipping - no changes needed")
                 entities_skipped += 1
@@ -3196,7 +3212,20 @@ async def _get_hierarchy_async():
             entity_context = restructurer.build_naming_context(entity_id, entity_data)
             native_base_name = entity_context["entity"]
             user_name = entity_data.get("name")
-            base_name = user_name if user_name is not None else native_base_name
+            if user_name is not None:
+                raw_device_name = (
+                    device_data.get("name_by_user")
+                    or device_data.get("name")
+                    or device_data.get("model", "")
+                )
+                area_name = restructurer.areas.get(area_id, {}).get("name", "") if area_id else ""
+                user_base_name = restructurer.strip_entity_hierarchy(
+                    user_name,
+                    (raw_device_name, area_name, entity_context["device"]),
+                )
+            else:
+                user_base_name = None
+            base_name = user_base_name if user_base_name is not None else native_base_name
 
             suggested_entity_id, suggested_entity_name = restructurer.generate_new_entity_id(entity_id, entity_data)
 
@@ -3209,6 +3238,7 @@ async def _get_hierarchy_async():
                     "device_class": device_class,
                     "original_name": original_name,  # Original HA friendly name
                     "user_name": user_name,  # Explicit HA entity-name override, or None
+                    "user_base_name": user_base_name,  # Override stripped to its entity-only suffix
                     "base_name": base_name,  # Stripped base name for editing
                     "native_base_name": native_base_name,  # Used by the explicit reset/revert action
                     "suggested_name": suggested_entity_name,

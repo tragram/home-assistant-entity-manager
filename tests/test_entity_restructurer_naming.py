@@ -178,6 +178,28 @@ def test_native_entity_name_equal_to_device_name_is_empty_suffix(restructurer):
     )
 
 
+def test_legacy_main_entity_full_name_is_reduced_to_empty_suffix(restructurer):
+    """An area plus device registry name must not be appended as a suffix."""
+    restructurer.naming_templates.apply_preset("home_assistant")
+    restructurer.areas["living_room"]["name"] = "VIP"
+    restructurer.devices["device-1"]["name"] = "Bodovka L1"
+    restructurer.entities = {
+        "light.vip_bodovka_l1_vip_bodovka_l1": {
+            "id": "registry-main-light",
+            "entity_id": "light.vip_bodovka_l1_vip_bodovka_l1",
+            "device_id": "device-1",
+            "original_name": None,
+            "name": "VIP Bodovka L1",
+            "has_entity_name": True,
+        }
+    }
+
+    assert restructurer.generate_new_entity_id("light.vip_bodovka_l1_vip_bodovka_l1", {}) == (
+        "light.vip_bodovka_l1",
+        "",
+    )
+
+
 def test_composed_state_name_is_reduced_to_entity_name(restructurer):
     restructurer.naming_templates.apply_preset("home_assistant")
     restructurer.entities["sensor.existing_id"].update({"original_name": None, "name": None})

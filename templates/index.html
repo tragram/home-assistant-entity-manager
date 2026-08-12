@@ -4531,7 +4531,8 @@
                     if (!this.resetEntityIds || entity.device_id !== this.selectedDevice) {
                         return this.entityNeedsRename(entity);
                     }
-                    if (this.resetPreviewing || !entity._resetPreviewName || !entity._resetPreviewId) {
+                    if (this.resetPreviewing || entity._resetPreviewName === null ||
+                        entity._resetPreviewName === undefined || !entity._resetPreviewId) {
                         return true;
                     }
                     return entity.id !== entity._resetPreviewId || entity.original_name !== entity._resetPreviewName;
