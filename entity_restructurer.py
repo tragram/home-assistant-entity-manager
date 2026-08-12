@@ -347,6 +347,13 @@ class EntityRestructurer:
         )
         name = next((candidate for candidate in candidates if candidate), None)
         if name is not None:
+            # Some integrations expose the device name again as the native
+            # name of their main entity. Treat it as an empty entity suffix;
+            # otherwise a reset repeatedly produces "Device Device" IDs and
+            # immediately proposes the same rename again after reloading.
+            for prefix in filter(None, prefixes):
+                if name.lower() == prefix.lower():
+                    return ""
             return name
 
         name = state.get("attributes", {}).get("friendly_name")

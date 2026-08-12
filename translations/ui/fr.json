@@ -8,6 +8,14 @@
     "devices": "Appareils",
     "entities": "Entités"
   },
+  "categories": {
+    "group_by": "Regrouper les appareils par",
+    "areas": "Zones",
+    "device_types": "Types d'appareil",
+    "integrations": "Intégrations",
+    "unknown": "Inconnu",
+    "none_found": "Aucune catégorie trouvée"
+  },
   "filters": {
     "select_area": "Sélectionner une zone...",
     "all_domains": "Tous les domaines",
@@ -183,6 +191,7 @@
     "unassigned": "Non assigné",
     "select_device": "Sélectionner un appareil",
     "select_area": "Sélectionner une zone",
+    "select_category": "Sélectionner une catégorie",
     "disabled_badge": "désactivé",
     "filter_placeholder": "Filtrer les appareils...",
     "reset_entity_ids": "Réinitialiser tous les ID et noms d’entité",
@@ -193,6 +202,7 @@
     "select_device": "Sélectionner l’appareil",
     "select_visible": "Sélectionner les visibles",
     "select_area": "Sélectionner la zone",
+    "select_category": "Sélectionner la catégorie",
     "select_floor": "Sélectionner l’étage",
     "devices_selected": "appareils sélectionnés",
     "areas_selected": "zones sélectionnées",

@@ -2793,7 +2793,8 @@ async def rename_device_handler(job, ctx):
 
             # Skip if nothing would change
             current_name = renamer_state["restructurer"].entities[old_entity_id].get("name")
-            if new_entity_id == old_entity_id and new_friendly_name == (current_name or ""):
+            name_unchanged = current_name is None if new_friendly_name == "" else new_friendly_name == current_name
+            if new_entity_id == old_entity_id and name_unchanged:
                 logger.info("  Skipping - no changes needed")
                 entities_skipped += 1
                 processed += 1
@@ -3043,6 +3044,26 @@ def _strip_prefix(full_name: str, prefix: str) -> str:
     return full_name
 
 
+def _device_type_from_domains(domains: list[str]) -> Optional[str]:
+    """Choose a useful device category from the domains it exposes."""
+    preferred_domains = (
+        "light",
+        "climate",
+        "camera",
+        "media_player",
+        "vacuum",
+        "lock",
+        "cover",
+        "fan",
+        "switch",
+        "alarm_control_panel",
+        "water_heater",
+        "lawn_mower",
+        "humidifier",
+    )
+    return next((domain for domain in preferred_domains if domain in domains), domains[0] if domains else None)
+
+
 async def _get_hierarchy_async():
     """Async implementation of get_hierarchy."""
     try:
@@ -3128,6 +3149,15 @@ async def _get_hierarchy_async():
                     if domain and domain not in integrations:
                         integrations.append(domain)
 
+            # Classify the device by the domain of its representative entity.
+            # Prefer user-facing control/media domains over diagnostic sensors.
+            device_domains = [
+                entity_id.partition(".")[0]
+                for entity_id, entity in restructurer.entities.items()
+                if entity.get("device_id") == device_id
+            ]
+            device_type = _device_type_from_domains(device_domains)
+
             # Z2M-Namens-Drift: Z2M-friendly_name vs. HA-Name (raw_name)
             z2m_ieee = extract_z2m_ieee(device_data)
             z2m_current = z2m_names.get(z2m_ieee) if z2m_ieee else None
@@ -3143,6 +3173,7 @@ async def _get_hierarchy_async():
                     "manufacturer": device_data.get("manufacturer"),
                     "model": device_data.get("model"),
                     "integrations": integrations,  # e.g., ["homekit", "zha"]
+                    "device_type": device_type,
                     "disabled_by": device_data.get("disabled_by"),
                     "is_z2m": bool(z2m_ieee),
                     "z2m_current_name": z2m_current,  # aktueller Z2M-friendly_name (oder None)

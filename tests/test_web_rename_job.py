@@ -573,3 +573,10 @@ def test_batch_device_rename_continues_after_individual_failure(monkeypatch) -> 
     assert (result["completed"], result["warnings"], result["failed"]) == (1, 1, 1)
     assert [device["status"] for device in result["devices"]] == ["completed", "failed", "warning"]
     assert context.progress_events[-1] == (3, 3, "Finished Three")
+
+
+def test_device_type_prefers_control_domain_over_diagnostics() -> None:
+    """Device browsing categories use the most useful exposed domain."""
+    assert web_ui._device_type_from_domains(["sensor", "binary_sensor", "light"]) == "light"
+    assert web_ui._device_type_from_domains(["sensor", "binary_sensor"]) == "sensor"
+    assert web_ui._device_type_from_domains([]) is None

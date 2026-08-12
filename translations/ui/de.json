@@ -8,6 +8,14 @@
     "devices": "Geräte",
     "entities": "Entitäten"
   },
+  "categories": {
+    "group_by": "Geräte gruppieren nach",
+    "areas": "Bereiche",
+    "device_types": "Gerätetypen",
+    "integrations": "Integrationen",
+    "unknown": "Unbekannt",
+    "none_found": "Keine Kategorien gefunden"
+  },
   "filters": {
     "select_area": "Wähle einen Bereich...",
     "all_domains": "Alle Domänen",
@@ -183,6 +191,7 @@
     "unassigned": "Nicht zugewiesen",
     "select_device": "Gerät auswählen",
     "select_area": "Bereich auswählen",
+    "select_category": "Kategorie auswählen",
     "disabled_badge": "deaktiviert",
     "filter_placeholder": "Geräte filtern...",
     "reset_entity_ids": "Alle Entitäts-IDs und Namen zurücksetzen",
@@ -193,6 +202,7 @@
     "select_device": "Gerät auswählen",
     "select_visible": "Sichtbare auswählen",
     "select_area": "Bereich auswählen",
+    "select_category": "Kategorie auswählen",
     "select_floor": "Etage auswählen",
     "devices_selected": "Geräte ausgewählt",
     "areas_selected": "Bereiche ausgewählt",

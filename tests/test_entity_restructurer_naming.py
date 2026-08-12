@@ -158,6 +158,26 @@ def test_original_name_is_not_replaced_by_existing_composed_name(restructurer):
     )
 
 
+def test_native_entity_name_equal_to_device_name_is_empty_suffix(restructurer):
+    """Resetting a main entity must not duplicate the device name forever."""
+    restructurer.naming_templates.apply_preset("home_assistant")
+    restructurer.devices["device-1"]["name"] = "Keyboard (device 5)"
+    restructurer.entities = {
+        "binary_sensor.old_keyboard": {
+            "id": "registry-keyboard",
+            "entity_id": "binary_sensor.old_keyboard",
+            "device_id": "device-1",
+            "original_name": "Keyboard (device 5)",
+            "has_entity_name": True,
+        }
+    }
+
+    assert restructurer.generate_new_entity_id("binary_sensor.old_keyboard", {}) == (
+        "binary_sensor.living_room_keyboard_device_5",
+        "",
+    )
+
+
 def test_composed_state_name_is_reduced_to_entity_name(restructurer):
     restructurer.naming_templates.apply_preset("home_assistant")
     restructurer.entities["sensor.existing_id"].update({"original_name": None, "name": None})

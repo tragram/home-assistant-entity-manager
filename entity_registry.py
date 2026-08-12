@@ -44,7 +44,11 @@ class EntityRegistry:
         if new_entity_id:
             message["new_entity_id"] = new_entity_id
         if name is not None:
-            message["name"] = name
+            # Home Assistant distinguishes a missing ``name`` field from an
+            # explicit JSON null. Generated main entities intentionally have
+            # an empty suffix, so clear their user override instead of storing
+            # an empty string as the override.
+            message["name"] = name or None
         if labels is not None:
             message["labels"] = labels
         if enable:

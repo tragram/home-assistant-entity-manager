@@ -1520,10 +1520,10 @@
 
         <!-- Inheritance Preview Bar (Desktop only) -->
         <div class="inheritance-bar" x-show="selectedArea || selectedDevice || selectedEntity">
-            <template x-if="selectedAreaData">
+            <template x-if="selectedCategoryData">
                 <div class="flex items-center gap-2">
-                    <i class="ri-map-pin-line"></i>
-                    <span x-text="selectedAreaData.name"></span>
+                    <i :class="selectedCategoryData.icon || categoryModeIcon"></i>
+                    <span x-text="selectedCategoryData.name"></span>
                 </div>
             </template>
             <template x-if="selectedDeviceData">
@@ -1544,25 +1544,38 @@
 
         <!-- 3-Panel Layout -->
         <div class="panel-container">
-            <!-- Panel 1: Areas -->
+            <!-- Panel 1: Device categories -->
             <div class="panel"
                  :class="{'mobile-active': mobileView === 'areas'}">
                 <div class="panel-header">
                     <div class="flex items-center justify-between flex-1">
                         <h2 class="font-semibold text-gray-800">
-                            <i class="ri-map-pin-line mr-1"></i>
-                            <span x-text="t('panels.areas')">Areas</span>
+                            <i :class="categoryModeIcon" class="mr-1"></i>
+                            <span x-text="categoryModeLabel">Areas</span>
                         </h2>
                         <div class="flex items-center gap-2">
-                            <span class="badge badge-gray" x-text="hierarchy.areas.length"></span>
+                            <span class="badge badge-gray" x-text="sortedCategories.length"></span>
                             <!-- Show selected area name when collapsed -->
-                            <span x-show="isMobile && panelCollapsed.areas && selectedAreaData"
+                            <span x-show="isMobile && panelCollapsed.areas && selectedCategoryData"
                                   class="text-sm text-blue-600 font-medium truncate max-w-32"
-                                  x-text="selectedAreaData?.name"></span>
+                                  x-text="selectedCategoryData?.name"></span>
                         </div>
                     </div>
                 </div>
                 <div class="panel-content">
+                    <div class="flex gap-1 p-2 border-b bg-gray-50" role="tablist" :aria-label="t('categories.group_by')">
+                        <template x-for="mode in categoryModes" :key="mode.id">
+                            <button type="button"
+                                    class="btn btn-ghost btn-sm flex-1"
+                                    :class="categoryMode === mode.id ? 'text-blue-600 bg-blue-100' : ''"
+                                    @click="setCategoryMode(mode.id)"
+                                    :title="t(mode.labelKey)"
+                                    :aria-selected="categoryMode === mode.id">
+                                <i :class="mode.icon"></i>
+                                <span class="hidden xl:inline ml-1" x-text="t(mode.labelKey)"></span>
+                            </button>
+                        </template>
+                    </div>
                     <template x-if="loading">
                         <div class="flex items-center justify-center py-8">
                             <i class="ri-loader-4-line animate-spin text-2xl text-blue-600"></i>
@@ -1570,7 +1583,7 @@
                     </template>
                     <template x-if="!loading">
                         <div>
-                            <template x-for="area in sortedAreas" :key="area.id">
+                            <template x-for="area in sortedCategories" :key="categoryMode + ':' + area.id">
                                 <div class="hierarchy-item"
                                      :class="{ 'selected': selectedArea === area.id, 'special-area': area.isSpecial }"
                                      @click="selectArea(area)">
@@ -1584,7 +1597,7 @@
                                                        :indeterminate="batchAreaSelectionState(area.id).some"
                                                        @click.stop="toggleBatchAreaDevices(area.id)"
                                                        :aria-label="t('batch_rename.select_area')">
-                                                <i :class="area.isSpecial ? 'ri-question-line text-orange-500' : 'ri-map-pin-line text-blue-500'"></i>
+                                                <i :class="area.icon || (area.isSpecial ? 'ri-question-line text-orange-500' : categoryModeIcon + ' text-blue-500')"></i>
                                                 <span class="font-medium truncate" x-text="area.name"></span>
                                             </div>
                                             <div class="text-xs text-gray-500 mt-0.5" x-show="area.has_override">
@@ -1595,9 +1608,8 @@
                                             <span x-show="batchRename.mode && batchSelectedCountForArea(area.id) > 0"
                                                   class="badge badge-blue"
                                                   x-text="batchSelectedCountForArea(area.id)"></span>
-                                            <span class="text-xs text-gray-500"
-                                                  x-text="area.isSpecial ? area.deviceCount + ' Devices' : getAreaEntityCount(area.id)"></span>
-                                            <a x-show="!area.isSpecial"
+                                            <span class="text-xs text-gray-500" x-text="area.deviceCount + ' ' + t('units.devices')"></span>
+                                            <a x-show="categoryMode === 'area' && !area.isSpecial"
                                                :href="'/config/areas/area/' + area.id"
                                                target="_blank"
                                                @click.stop
@@ -1609,9 +1621,9 @@
                                     </div>
                                 </div>
                             </template>
-                            <div x-show="hierarchy.areas.length === 0" class="text-center py-8 text-gray-500">
-                                <i class="ri-map-pin-line text-3xl mb-2 block"></i>
-                                <span x-text="t('area.no_areas')">No areas found</span>
+                            <div x-show="sortedCategories.length === 0" class="text-center py-8 text-gray-500">
+                                <i :class="categoryModeIcon" class="text-3xl mb-2 block"></i>
+                                <span x-text="t('categories.none_found')">No categories found</span>
                             </div>
                         </div>
                     </template>
@@ -1643,7 +1655,7 @@
                     </div>
                 </div>
                 <!-- Device Filter -->
-                <div x-show="selectedAreaData && !(isMobile && panelCollapsed.devices)" class="px-4 py-2 bg-gray-50 border-b">
+                <div x-show="selectedCategoryData && !(isMobile && panelCollapsed.devices)" class="px-4 py-2 bg-gray-50 border-b">
                     <div class="relative">
                         <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
                         <input type="text"
@@ -1663,9 +1675,9 @@
                             <span x-text="t('batch_rename.select_visible')">Select visible</span>
                         </button>
                         <button @click.stop="selectAreaBatchDevices()" class="btn btn-ghost btn-sm">
-                            <span x-text="t('batch_rename.select_area')">Select area</span>
+                            <span x-text="t('batch_rename.select_category')">Select category</span>
                         </button>
-                        <button x-show="selectedAreaData?.floor_id" @click.stop="selectFloorBatchDevices()" class="btn btn-ghost btn-sm">
+                        <button x-show="categoryMode === 'area' && selectedAreaData?.floor_id" @click.stop="selectFloorBatchDevices()" class="btn btn-ghost btn-sm">
                             <span x-text="t('batch_rename.select_floor')">Select floor</span>
                         </button>
                         <button @click.stop="batchRename.selected = []" class="btn btn-ghost btn-sm"
@@ -1678,7 +1690,7 @@
                     <template x-if="!selectedArea">
                         <div class="text-center py-8 text-gray-500">
                             <i class="ri-arrow-left-line text-3xl mb-2 block"></i>
-                            <span x-text="t('device.select_area')">Select an area</span>
+                            <span x-text="t('device.select_category')">Select a category</span>
                         </div>
                     </template>
                     <template x-if="selectedArea">
@@ -1689,7 +1701,7 @@
                                          'selected': batchRename.mode ? isBatchDeviceSelected(device.id) : selectedDevice === device.id,
                                          'has-changes': deviceNeedsRename(device),
                                          'is-disabled': device.disabled_by,
-                                         'no-area-mode': selectedArea === '__no_area__'
+                                         'no-area-mode': categoryMode === 'area' && selectedArea === '__no_area__'
                                      }"
                                      @click="batchRename.mode ? toggleBatchDevice(device.id) : selectDevice(device)">
                                     <!-- Main row -->
@@ -1733,7 +1745,7 @@
                                         </a>
                                     </div>
                                     <!-- Area Assignment row (only for devices without area) -->
-                                    <div x-show="selectedArea === '__no_area__'" class="device-area-row" @click.stop>
+                                    <div x-show="categoryMode === 'area' && selectedArea === '__no_area__'" class="device-area-row" @click.stop>
                                         <select @change="assignDeviceArea(device.id, $event.target.value)"
                                                 class="area-select">
                                             <option value="" x-text="t('area.select_area')">Select area...</option>
@@ -1745,7 +1757,7 @@
                                 </div>
                             </template>
                             <!-- Virtual device groups (entities without physical device) -->
-                            <div x-show="filteredVirtualDevices.length > 0" class="mt-4 pt-4 border-t">
+                            <div x-show="categoryMode === 'area' && filteredVirtualDevices.length > 0" class="mt-4 pt-4 border-t">
                                 <div class="text-xs text-gray-500 mb-2 px-2">
                                     <i class="ri-stack-line"></i>
                                     <span x-text="t('device.entities_without_device')">Entities without device</span>
@@ -1803,16 +1815,8 @@
                                x-ref="deviceNameInput"
                                :value="devicePreviewBaseName !== null ? devicePreviewBaseName : selectedDeviceData?.base_name"
                                @input.debounce.250ms="devicePreviewBaseName = $event.target.value; if (resetEntityIds) refreshSingleResetPreviews()"
-                               @keyup.enter="renameDeviceInHA($event.target.value)"
                                :placeholder="selectedDeviceData?.base_name"
                                :disabled="renamingDevice || applyingEntityId || executing">
-                        <button @click="renameDeviceInHA($refs.deviceNameInput.value)"
-                                class="btn btn-sm"
-                                style="background: #10b981; color: white;"
-                                :disabled="resetPreviewing || renamingDevice || applyingEntityId || executing"
-                                :class="{'opacity-50 cursor-not-allowed': resetPreviewing || renamingDevice || applyingEntityId || executing}">
-                            <i class="ri-check-line"></i>
-                        </button>
                     </div>
                     <label class="flex items-start gap-2 mt-2 text-xs text-gray-600 cursor-pointer">
                         <input type="checkbox"
@@ -2203,9 +2207,9 @@
                     </button>
                     <button @click="executeAllChanges()"
                             x-show="pendingChangesCount > 0"
-                            :disabled="applyingEntityId || renamingDevice"
+                            :disabled="resetPreviewing || applyingEntityId || renamingDevice"
                             class="btn btn-success"
-                            :class="{'opacity-50 cursor-not-allowed': applyingEntityId || renamingDevice}">
+                            :class="{'opacity-50 cursor-not-allowed': resetPreviewing || applyingEntityId || renamingDevice}">
                         <i class="ri-check-double-line mr-2"></i>
                         <span x-text="t('action_bar.apply_all')">Apply All Changes</span>
                     </button>
@@ -2829,6 +2833,12 @@
                 selectedAreaData: null,
                 selectedDeviceData: null,
                 selectedEntityData: null,
+                categoryMode: 'area',
+                categoryModes: [
+                    {id: 'area', labelKey: 'categories.areas', icon: 'ri-map-pin-line'},
+                    {id: 'device_type', labelKey: 'categories.device_types', icon: 'ri-shapes-line'},
+                    {id: 'integration', labelKey: 'categories.integrations', icon: 'ri-plug-line'}
+                ],
                 devicePreviewBaseName: null,  // Temporary preview while editing device name
                 resetEntityIds: false,
                 resetPreviewing: false,
@@ -3230,22 +3240,98 @@
                     return sortedAreas;
                 },
 
+                get categoryModeIcon() {
+                    return this.categoryModes.find(mode => mode.id === this.categoryMode)?.icon || 'ri-map-pin-line';
+                },
+
+                get categoryModeLabel() {
+                    const mode = this.categoryModes.find(item => item.id === this.categoryMode);
+                    return this.t(mode?.labelKey || 'categories.areas');
+                },
+
+                get selectedCategoryData() {
+                    if (!this.selectedArea) return null;
+                    if (this.categoryMode === 'area') return this.selectedAreaData;
+                    return this.sortedCategories.find(category => category.id === this.selectedArea) || this.selectedAreaData;
+                },
+
+                get sortedCategories() {
+                    if (this.categoryMode === 'area') {
+                        return this.sortedAreas.map(area => ({
+                            ...area,
+                            deviceCount: this.devicesForCategory(area.id).length
+                        }));
+                    }
+
+                    const categories = new Map();
+                    for (const device of this.hierarchy.devices) {
+                        const keys = this.categoryMode === 'integration'
+                            ? (device.integrations?.length ? device.integrations : ['__unknown_integration__'])
+                            : [device.device_type || '__unknown_type__'];
+                        for (const key of keys) {
+                            if (!categories.has(key)) {
+                                const unknown = key.startsWith('__unknown_');
+                                categories.set(key, {
+                                    id: key,
+                                    name: unknown ? this.t('categories.unknown') : this.categoryDisplayName(key),
+                                    icon: unknown
+                                        ? 'ri-question-line text-orange-500'
+                                        : this.categoryModeIcon + ' text-blue-500',
+                                    isSpecial: unknown
+                                });
+                            }
+                        }
+                    }
+                    return [...categories.values()]
+                        .map(category => ({...category, deviceCount: this.devicesForCategory(category.id).length}))
+                        .filter(category => !this.onlyChanges || category.deviceCount > 0)
+                        .sort((a, b) => a.name.localeCompare(b.name));
+                },
+
+                categoryDisplayName(value) {
+                    return (value || '').split('_')
+                        .map(part => part ? part[0].toUpperCase() + part.slice(1) : '')
+                        .join(' ');
+                },
+
+                devicesForCategory(categoryId) {
+                    let devices;
+                    if (this.categoryMode === 'area') {
+                        devices = this.hierarchy.devices.filter(device =>
+                            categoryId === '__no_area__' ? !device.area_id : device.area_id === categoryId
+                        );
+                    } else if (this.categoryMode === 'integration') {
+                        devices = this.hierarchy.devices.filter(device =>
+                            categoryId === '__unknown_integration__'
+                                ? !device.integrations?.length
+                                : device.integrations?.includes(categoryId)
+                        );
+                    } else {
+                        devices = this.hierarchy.devices.filter(device =>
+                            (device.device_type || '__unknown_type__') === categoryId
+                        );
+                    }
+                    if (!this.showDisabled) devices = devices.filter(device => !device.disabled_by);
+                    if (this.onlyChanges) devices = devices.filter(device => this.deviceNeedsRename(device));
+                    return devices;
+                },
+
+                setCategoryMode(mode) {
+                    if (!this.categoryModes.some(item => item.id === mode) || mode === this.categoryMode) return;
+                    this.categoryMode = mode;
+                    this.selectedArea = null;
+                    this.selectedAreaData = null;
+                    this.selectedDevice = null;
+                    this.selectedDeviceData = null;
+                    this.deviceFilter = '';
+                    this.saveState();
+                },
+
                 // Computed: Filtered devices for selected area (sorted alphabetically)
                 get filteredDevices() {
                     if (!this.selectedArea) return [];
 
-                    // Special handling for "No Area"
-                    let devices;
-                    if (this.selectedArea === '__no_area__') {
-                        devices = this.hierarchy.devices.filter(d => !d.area_id);
-                    } else {
-                        devices = this.hierarchy.devices.filter(d => d.area_id === this.selectedArea);
-                    }
-
-                    // Filter out disabled devices unless showDisabled is true
-                    if (!this.showDisabled) {
-                        devices = devices.filter(d => !d.disabled_by);
-                    }
+                    let devices = this.devicesForCategory(this.selectedArea);
 
                     // Apply text filter (search in name, base_name, manufacturer, model, integrations)
                     if (this.deviceFilter) {
@@ -3350,7 +3436,7 @@
 
                 // Computed: Entities without device in selected area
                 get entitiesWithoutDevice() {
-                    if (!this.selectedArea) return [];
+                    if (!this.selectedArea || this.categoryMode !== 'area') return [];
                     return this.hierarchy.entities.filter(e =>
                         !e.device_id && e.area_id === this.selectedArea
                     );
@@ -3358,7 +3444,7 @@
 
                 // Computed: Virtual device groups with entity counts
                 get filteredVirtualDevices() {
-                    if (!this.selectedArea) return [];
+                    if (!this.selectedArea || this.categoryMode !== 'area') return [];
 
                     const knownDomains = new Set();
                     Object.values(this.virtualDeviceGroups).forEach(g => {
@@ -3495,9 +3581,10 @@
 
                 // Computed: Count of entities that need renaming + Z2M-Geräte mit Namens-Drift
                 get pendingChangesCount() {
-                    const entityChanges = this.filteredEntities.filter(e => this.entityNeedsRename(e)).length;
+                    const entityChanges = this.filteredEntities.filter(e => this.entityListNeedsRename(e)).length;
+                    const deviceChange = this.selectedDeviceData && this.deviceNameNeedsRename(this.selectedDeviceData) ? 1 : 0;
                     const z2mDrift = this.filteredDevices.filter(d => d.z2m_drift).length;
-                    return entityChanges + z2mDrift;
+                    return entityChanges + deviceChange + z2mDrift;
                 },
 
                 // Computed: Count of disabled entities in current selection (only when showDisabled is true)
@@ -3579,6 +3666,7 @@
                 // Save selection state (localStorage + URL)
                 saveState() {
                     const state = {
+                        categoryMode: this.categoryMode,
                         area: this.selectedArea,
                         device: this.selectedDevice,
                         filters: {
@@ -3596,6 +3684,7 @@
 
                     // Also update URL for direct access / bookmarks
                     const params = new URLSearchParams();
+                    if (this.categoryMode !== 'area') params.set('group', this.categoryMode);
                     if (this.selectedArea) params.set('area', this.selectedArea);
                     if (this.selectedDevice) params.set('device', this.selectedDevice);
 
@@ -3610,12 +3699,14 @@
 
                 // Restore selection from localStorage or URL
                 restoreState() {
+                    let categoryMode = 'area';
                     let areaId = null;
                     let deviceId = null;
                     let filters = null;
 
                     // 1. Try URL params first (for deep links)
                     const params = new URLSearchParams(window.location.search);
+                    categoryMode = params.get('group') || categoryMode;
                     areaId = params.get('area');
                     deviceId = params.get('device');
 
@@ -3624,6 +3715,7 @@
                         const saved = localStorage.getItem('entityManagerState');
                         if (saved) {
                             const state = JSON.parse(saved);
+                            if (!params.has('group')) categoryMode = state.categoryMode || categoryMode;
                             // Use localStorage for area/device only if not in URL
                             if (!areaId) {
                                 areaId = state.area;
@@ -3637,13 +3729,29 @@
                     }
 
                     // Apply restored filters
+                    if (this.categoryModes.some(mode => mode.id === categoryMode)) {
+                        this.categoryMode = categoryMode;
+                    }
                     if (filters) {
                         if (typeof filters.onlyChanges === 'boolean') this.onlyChanges = filters.onlyChanges;
                         if (typeof filters.showDisabled === 'boolean') this.showDisabled = filters.showDisabled;
                     }
 
                     // Apply restored selection
-                    if (areaId) {
+                    if (areaId && this.categoryMode !== 'area') {
+                        const category = this.sortedCategories.find(item => item.id === areaId);
+                        if (category) {
+                            this.selectedArea = category.id;
+                            this.selectedAreaData = category;
+                            if (deviceId) {
+                                const device = this.devicesForCategory(category.id).find(item => item.id === deviceId);
+                                if (device) {
+                                    this.selectedDevice = device.id;
+                                    this.selectedDeviceData = device;
+                                }
+                            }
+                        }
+                    } else if (areaId) {
                         // Special handling for "__no_area__"
                         if (areaId === '__no_area__') {
                             const devicesWithoutArea = this.hierarchy.devices.filter(d => !d.area_id);
@@ -3958,9 +4066,9 @@
                 // Get mobile navigation title
                 getMobileTitle() {
                     if (this.mobileView === 'areas') {
-                        return this.t('panels.areas');
+                        return this.categoryModeLabel;
                     } else if (this.mobileView === 'devices') {
-                        return this.selectedAreaData?.name || this.t('panels.devices');
+                        return this.selectedCategoryData?.name || this.t('panels.devices');
                     } else {
                         return this.selectedDeviceData?.name || this.t('panels.entities');
                     }
@@ -3968,8 +4076,8 @@
 
                 // Get mobile navigation subtitle
                 getMobileSubtitle() {
-                    if (this.mobileView === 'entities' && this.selectedAreaData) {
-                        return this.selectedAreaData?.name;
+                    if (this.mobileView === 'entities' && this.selectedCategoryData) {
+                        return this.selectedCategoryData?.name;
                     }
                     return '';
                 },
@@ -4030,10 +4138,7 @@
                 },
 
                 batchDevicesForArea(areaId) {
-                    return this.hierarchy.devices
-                        .filter(device => areaId === '__no_area__' ? !device.area_id : device.area_id === areaId)
-                        .filter(device => this.showDisabled || !device.disabled_by)
-                        .filter(device => !this.onlyChanges || this.deviceNeedsRename(device));
+                    return this.devicesForCategory(areaId);
                 },
 
                 batchSelectedCountForArea(areaId) {
@@ -4178,7 +4283,7 @@
                             const nameChanged = this.batchRename.resetEntityIds
                                 ? plan.old_name !== plan.new_name
                                 : (plan.user_name !== null && plan.user_name !== undefined
-                                    ? !this.sameEntityBaseName(plan.user_name, plan.expected_base)
+                                    ? plan.user_name === '' || !this.sameEntityBaseName(plan.user_name, plan.expected_base)
                                     : plan.old_name !== plan.new_name);
                             if (plan.old_id !== plan.new_id || nameChanged) {
                                 entry.row.entity_changes.push(plan);
@@ -4354,7 +4459,9 @@
                 getDeviceDisplayName(device) {
                     if (!device) return '';
                     if (device.suggested_name) return device.suggested_name;
-                    const area = this.selectedAreaData;
+                    const area = this.categoryMode === 'area'
+                        ? this.selectedAreaData
+                        : this.hierarchy.areas.find(item => item.id === device.area_id);
                     const areaName = area?.name || '';
                     const deviceBaseName = device.base_name;
 
@@ -4373,7 +4480,9 @@
                     const domain = entity.id.split('.')[0];
 
                     // Area
-                    const area = this.selectedAreaData;
+                    const area = this.categoryMode === 'area'
+                        ? this.selectedAreaData
+                        : this.hierarchy.areas.find(item => item.id === entity.area_id);
                     if (area) {
                         parts.push(area.name);
                     }
@@ -4477,7 +4586,9 @@
                     const parts = [];
 
                     // Area
-                    const area = this.selectedAreaData;
+                    const area = this.categoryMode === 'area'
+                        ? this.selectedAreaData
+                        : this.hierarchy.areas.find(item => item.id === entity.area_id);
                     if (area) {
                         parts.push(area.name);
                     }
@@ -4549,6 +4660,9 @@
                     // name; compare only its entity-specific suffix. Resetting
                     // that override remains an explicit edit action.
                     if (entity.user_name !== null && entity.user_name !== undefined) {
+                        // An explicit empty string is a stale HA override, not
+                        // the same thing as having no override at all.
+                        if (entity.user_name === '') return true;
                         return !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity));
                     }
 
@@ -4997,7 +5111,7 @@
                     const renameName = this.entityNameForRename(entity, newName);
                     const idChanged = entity.id !== newId;
                     const nameChanged = entity.user_name !== null && entity.user_name !== undefined
-                        ? !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity))
+                        ? entity.user_name === '' || !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity))
                         : entity.original_name !== newName;
 
                     if (!idChanged && !nameChanged) {
@@ -5726,8 +5840,17 @@
 
                 // Execute ALL pending changes with batch processing to avoid timeouts
                 async executeAllChanges() {
+                    // Device name edits and full resets use the device job so
+                    // associated helpers and every entity are handled together.
+                    if (this.selectedDeviceData && !this.isVirtualDevice(this.selectedDevice)
+                        && (this.resetEntityIds || this.deviceNameNeedsRename(this.selectedDeviceData))) {
+                        const baseName = (this.devicePreviewBaseName ?? this.selectedDeviceData.base_name ?? '').trim();
+                        await this.renameDeviceInHA(baseName);
+                        return;
+                    }
+
                     // Find all entities that need renaming
-                    const entitiesToChange = this.filteredEntities.filter(e => this.entityNeedsRename(e));
+                    const entitiesToChange = this.filteredEntities.filter(e => this.entityListNeedsRename(e));
                     // Z2M devices in the current view whose Z2M name drifted from the HA name
                     const z2mDriftDevices = this.filteredDevices.filter(d => d.z2m_drift);
                     if (entitiesToChange.length === 0 && z2mDriftDevices.length === 0) {

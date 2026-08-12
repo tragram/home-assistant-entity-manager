@@ -8,6 +8,14 @@
     "devices": "Devices",
     "entities": "Entities"
   },
+  "categories": {
+    "group_by": "Group devices by",
+    "areas": "Areas",
+    "device_types": "Device types",
+    "integrations": "Integrations",
+    "unknown": "Unknown",
+    "none_found": "No categories found"
+  },
   "filters": {
     "select_area": "Select an area...",
     "all_domains": "All domains",
@@ -183,6 +191,7 @@
     "unassigned": "Unassigned",
     "select_device": "Select a device",
     "select_area": "Select an area",
+    "select_category": "Select a category",
     "disabled_badge": "disabled",
     "filter_placeholder": "Filter devices...",
     "reset_entity_ids": "Reset all entity IDs and names",
@@ -193,6 +202,7 @@
     "select_device": "Select device",
     "select_visible": "Select visible",
     "select_area": "Select area",
+    "select_category": "Select category",
     "select_floor": "Select floor",
     "devices_selected": "devices selected",
     "areas_selected": "areas selected",
