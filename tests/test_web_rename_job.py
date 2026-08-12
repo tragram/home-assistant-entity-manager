@@ -192,8 +192,8 @@ def test_device_rename_plan_uses_shared_naming_generator() -> None:
     ]
 
 
-def test_device_rename_plan_can_reset_ids_without_resetting_user_names() -> None:
-    """ID reset uses native naming context while preserving explicit HA names."""
+def test_device_rename_plan_resets_ids_and_names() -> None:
+    """A full reset uses native naming context for both IDs and names."""
 
     class FakeRestructurer:
         entities = {"sensor.custom_id": {"device_id": "dev1"}}
@@ -216,9 +216,7 @@ def test_device_rename_plan_can_reset_ids_without_resetting_user_names() -> None
         reset_entity_ids=True,
     )
 
-    assert changes == [
-        ("sensor.custom_id", "sensor.kitchen_temperature", "My displayed temperature")
-    ]
+    assert changes == [("sensor.custom_id", "sensor.kitchen_temperature", "Temperature")]
 
 
 def test_device_rename_preserves_names_captured_before_device_change() -> None:

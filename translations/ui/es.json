@@ -83,7 +83,14 @@
     "delete_entity": "Eliminar entidad",
     "apply_rename": "Aplicar renombrado",
     "enable": "Activar",
-    "no_name": "(sin nombre)"
+    "no_name": "(sin nombre)",
+    "row_guide": "Cómo leer las filas de entidades:",
+    "needs_change": "Necesita cambios",
+    "already_correct": "Ya coincide",
+    "current_values_guide": "Gris = nombre e ID actuales",
+    "proposed_values_guide": "Verde = resultado tras aplicar",
+    "current_values": "Actual",
+    "after_applying": "Después de aplicar"
   },
   "virtual_devices": {
     "automations": "Automatizaciones",
@@ -178,8 +185,8 @@
     "select_area": "Seleccionar un área",
     "disabled_badge": "desactivado",
     "filter_placeholder": "Filtrar dispositivos...",
-    "reset_entity_ids": "Restablecer todos los ID de entidad",
-    "reset_entity_ids_hint": "Volver a crear los ID con las plantillas de nombres actuales conservando los nombres de entidad."
+    "reset_entity_ids": "Restablecer todos los ID y nombres de entidad",
+    "reset_entity_ids_hint": "Volver a crear todos los ID y nombres visibles de entidad con las plantillas actuales."
   },
   "batch_rename": {
     "select_devices": "Seleccionar dispositivos",

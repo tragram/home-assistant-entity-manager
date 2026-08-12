@@ -83,7 +83,14 @@
     "delete_entity": "Supprimer l'entité",
     "apply_rename": "Appliquer le renommage",
     "enable": "Activer",
-    "no_name": "(sans nom)"
+    "no_name": "(sans nom)",
+    "row_guide": "Comment lire les lignes d’entités :",
+    "needs_change": "Modifications requises",
+    "already_correct": "Déjà conforme",
+    "current_values_guide": "Gris = nom et ID actuels",
+    "proposed_values_guide": "Vert = résultat après application",
+    "current_values": "Actuel",
+    "after_applying": "Après application"
   },
   "virtual_devices": {
     "automations": "Automatisations",
@@ -178,8 +185,8 @@
     "select_area": "Sélectionner une zone",
     "disabled_badge": "désactivé",
     "filter_placeholder": "Filtrer les appareils...",
-    "reset_entity_ids": "Réinitialiser tous les ID d’entité",
-    "reset_entity_ids_hint": "Recréer les ID avec les modèles de nommage actuels tout en conservant les noms d’entité."
+    "reset_entity_ids": "Réinitialiser tous les ID et noms d’entité",
+    "reset_entity_ids_hint": "Recréer tous les ID et noms affichés des entités à partir des modèles actuels."
   },
   "batch_rename": {
     "select_devices": "Sélectionner des appareils",

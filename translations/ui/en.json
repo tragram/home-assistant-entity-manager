@@ -83,7 +83,14 @@
     "delete_entity": "Delete entity",
     "apply_rename": "Apply rename",
     "enable": "Enable",
-    "no_name": "(no name)"
+    "no_name": "(no name)",
+    "row_guide": "How to read entity rows:",
+    "needs_change": "Needs changes",
+    "already_correct": "Already matches",
+    "current_values_guide": "Gray = current name and ID",
+    "proposed_values_guide": "Green = result after applying",
+    "current_values": "Current",
+    "after_applying": "After applying"
   },
   "virtual_devices": {
     "automations": "Automations",
@@ -178,8 +185,8 @@
     "select_area": "Select an area",
     "disabled_badge": "disabled",
     "filter_placeholder": "Filter devices...",
-    "reset_entity_ids": "Reset all entity IDs",
-    "reset_entity_ids_hint": "Recreate IDs from the current naming templates while preserving entity names."
+    "reset_entity_ids": "Reset all entity IDs and names",
+    "reset_entity_ids_hint": "Recreate every entity ID and display name from the current naming templates."
   },
   "batch_rename": {
     "select_devices": "Select devices",

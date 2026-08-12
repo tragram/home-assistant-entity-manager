@@ -839,6 +839,19 @@
             white-space: nowrap;
         }
 
+        .entity-card-simple .entity-state-label {
+            color: #6b7280;
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+        }
+
+        .entity-card-simple .new-state .entity-state-label {
+            color: #047857;
+        }
+
         .entity-card-simple .new-state .friendly-name {
             color: #059669;
         }
@@ -1776,9 +1789,11 @@
                      class="px-4 py-2 bg-gray-50 border-b"
                      :class="{'border-l-4 border-l-amber-500 bg-amber-50': deviceNameNeedsRename(selectedDeviceData)}">
                     <!-- Device rename preview -->
-                    <div x-show="deviceNameNeedsRename(selectedDeviceData)" class="mb-2 text-sm">
-                        <span class="text-gray-400" x-text="selectedDeviceData?.name"></span>
+                    <div x-show="deviceNameNeedsRename(selectedDeviceData)" class="mb-2 text-sm flex flex-wrap items-center gap-1">
+                        <span class="text-xs font-medium text-gray-500" x-text="t('device.current_name')">Current name</span>
+                        <span class="text-gray-600" x-text="selectedDeviceData?.name"></span>
                         <i class="ri-arrow-right-s-line text-gray-400 mx-1"></i>
+                        <span class="text-xs font-medium text-amber-700" x-text="t('device.new_name')">New name</span>
                         <span class="text-amber-600" x-text="getExpectedDeviceName(selectedDeviceData)"></span>
                     </div>
                     <label class="text-xs text-gray-500 block mb-1" x-text="t('device.base_name_label')">Device Base Name (without Area prefix)</label>
@@ -1787,15 +1802,15 @@
                                class="edit-input flex-1"
                                x-ref="deviceNameInput"
                                :value="devicePreviewBaseName !== null ? devicePreviewBaseName : selectedDeviceData?.base_name"
-                               @input="devicePreviewBaseName = $event.target.value"
+                               @input.debounce.250ms="devicePreviewBaseName = $event.target.value; if (resetEntityIds) refreshSingleResetPreviews()"
                                @keyup.enter="renameDeviceInHA($event.target.value)"
                                :placeholder="selectedDeviceData?.base_name"
                                :disabled="renamingDevice || applyingEntityId || executing">
                         <button @click="renameDeviceInHA($refs.deviceNameInput.value)"
                                 class="btn btn-sm"
                                 style="background: #10b981; color: white;"
-                                :disabled="renamingDevice || applyingEntityId || executing"
-                                :class="{'opacity-50 cursor-not-allowed': renamingDevice || applyingEntityId || executing}">
+                                :disabled="resetPreviewing || renamingDevice || applyingEntityId || executing"
+                                :class="{'opacity-50 cursor-not-allowed': resetPreviewing || renamingDevice || applyingEntityId || executing}">
                             <i class="ri-check-line"></i>
                         </button>
                     </div>
@@ -1803,10 +1818,11 @@
                         <input type="checkbox"
                                class="w-4 h-4 mt-0.5 accent-blue-600 shrink-0"
                                x-model="resetEntityIds"
-                               :disabled="renamingDevice || applyingEntityId || executing">
+                               @change="refreshSingleResetPreviews()"
+                               :disabled="resetPreviewing || renamingDevice || applyingEntityId || executing">
                         <span>
-                            <span class="font-medium block" x-text="t('device.reset_entity_ids')">Reset all entity IDs</span>
-                            <span class="text-gray-500" x-text="t('device.reset_entity_ids_hint')">Recreate IDs from the current naming templates while preserving entity names.</span>
+                            <span class="font-medium block" x-text="t('device.reset_entity_ids')">Reset all entity IDs and names</span>
+                            <span class="text-gray-500" x-text="t('device.reset_entity_ids_hint')">Recreate every entity ID and display name from the current naming templates.</span>
                         </span>
                     </label>
                     <!-- Z2M-Namens-Drift: Z2M-friendly_name weicht vom HA-Namen ab -->
@@ -1841,6 +1857,21 @@
                             class="badge cursor-pointer">
                         <i class="ri-eye-off-line mr-1"></i> <span x-text="t('filters.show_disabled')">Show Disabled</span>
                     </button>
+                </div>
+                <div x-show="selectedDevice && selectedDevice !== '__broken_refs__' && selectedArea !== '__no_area__'"
+                     class="px-4 py-2 bg-gray-50 border-b text-xs text-gray-600 flex flex-wrap items-center gap-x-5 gap-y-2"
+                     x-cloak>
+                    <span class="font-medium text-gray-700" x-text="t('entity.row_guide')">How to read entity rows:</span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm border-l-4 border-amber-500 bg-white"></span>
+                        <span x-text="t('entity.needs_change')">Needs changes</span>
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm border-l-4 border-emerald-500 bg-white"></span>
+                        <span x-text="t('entity.already_correct')">Already matches</span>
+                    </span>
+                    <span class="text-gray-500" x-text="t('entity.current_values_guide')">Gray = current name and ID</span>
+                    <span class="text-emerald-700" x-text="t('entity.proposed_values_guide')">Green = result after applying</span>
                 </div>
                 <div class="panel-content" >
                     <template x-if="!selectedDevice">
@@ -2011,8 +2042,8 @@
                             <template x-for="entity in filteredEntities" :key="entity.registry_id">
                                 <div class="entity-card-simple"
                                      :class="{
-                                         'has-changes': selectedArea !== '__no_area__' && entityNeedsRename(entity),
-                                         'no-changes': selectedArea === '__no_area__' || !entityNeedsRename(entity),
+                                         'has-changes': selectedArea !== '__no_area__' && entityListNeedsRename(entity),
+                                         'no-changes': selectedArea === '__no_area__' || !entityListNeedsRename(entity),
                                          'is-disabled': entity.disabled_by,
                                          'no-area-mode': selectedArea === '__no_area__'
                                      }">
@@ -2029,6 +2060,7 @@
                                     <!-- Main: Current → New (or just Current in no-area mode) -->
                                     <div class="entity-names" @click="selectedArea !== '__no_area__' && toggleEntityExpand(entity)">
                                         <div class="current-state">
+                                            <div class="entity-state-label" x-text="t('entity.current_values')">Current</div>
                                             <div class="friendly-name">
                                                 <span x-text="entity.original_name || t('entity.no_name')"></span>
                                                 <span x-show="isOrphanEntity(entity)"
@@ -2041,21 +2073,22 @@
                                         </div>
 
                                         <!-- Arrow and new state - hide in no-area mode -->
-                                        <template x-if="selectedArea !== '__no_area__' && entityNeedsRename(entity)">
+                                        <template x-if="selectedArea !== '__no_area__' && entityListNeedsRename(entity)">
                                             <div class="arrow-separator">
                                                 <i class="ri-arrow-right-line"></i>
                                             </div>
                                         </template>
 
-                                        <template x-if="selectedArea !== '__no_area__' && entityNeedsRename(entity)">
+                                        <template x-if="selectedArea !== '__no_area__' && entityListNeedsRename(entity)">
                                             <div class="new-state">
-                                                <div class="friendly-name" x-text="entity._previewName ?? getEntityFriendlyName(entity)"></div>
-                                                <code class="entity-id" x-text="entity._previewId || getNewEntityId(entity)"></code>
+                                                <div class="entity-state-label" x-text="t('entity.after_applying')">After applying</div>
+                                                <div class="friendly-name" x-text="getEntityListPreviewName(entity)"></div>
+                                                <code class="entity-id" x-text="getEntityListPreviewId(entity)"></code>
                                             </div>
                                         </template>
 
                                         <!-- OK badge - hide in no-area mode -->
-                                        <template x-if="selectedArea !== '__no_area__' && !entityNeedsRename(entity)">
+                                        <template x-if="selectedArea !== '__no_area__' && !entityListNeedsRename(entity)">
                                             <div class="no-change-badge">
                                                 <i class="ri-check-line"></i> <span x-text="t('entity.no_change')">OK</span>
                                             </div>
@@ -2063,14 +2096,14 @@
 
                                         <div class="flex items-center gap-2 ml-auto">
                                             <!-- Conflict warning - hide in no-area mode -->
-                                            <span x-show="selectedArea !== '__no_area__' && entityNeedsRename(entity) && isEntityIdTaken(entity)"
+                                            <span x-show="selectedArea !== '__no_area__' && entityListNeedsRename(entity) && isEntityListIdTaken(entity)"
                                                   class="text-xs text-red-500 flex items-center gap-1"
-                                                  :title="'Target ID: ' + getNewEntityId(entity)">
+                                                  :title="'Target ID: ' + getEntityListPreviewId(entity)">
                                                 <i class="ri-error-warning-line"></i> <span x-text="t('entity.id_conflict')">ID conflict</span>
                                             </span>
                                             <div class="btn-group">
                                                 <!-- Quick apply button - hide in no-area mode -->
-                                                <template x-if="selectedArea !== '__no_area__' && entityNeedsRename(entity)">
+                                                <template x-if="selectedArea !== '__no_area__' && entityListNeedsRename(entity) && !resetEntityIds">
                                                     <button @click.stop="quickApplyEntity(entity)"
                                                             class="action-btn"
                                                             :class="{
@@ -2239,8 +2272,8 @@
                                    @change="refreshBatchRenamePreviews()"
                                    :disabled="batchRename.previewing || batchRename.submitting">
                             <span>
-                                <span class="font-medium block" x-text="t('device.reset_entity_ids')">Reset all entity IDs</span>
-                                <span class="text-gray-500" x-text="t('device.reset_entity_ids_hint')">Recreate IDs from the current naming templates while preserving entity names.</span>
+                                <span class="font-medium block" x-text="t('device.reset_entity_ids')">Reset all entity IDs and names</span>
+                                <span class="text-gray-500" x-text="t('device.reset_entity_ids_hint')">Recreate every entity ID and display name from the current naming templates.</span>
                             </span>
                         </label>
                     </div>
@@ -2274,7 +2307,10 @@
                                            @input="rememberBatchRenameDraft(row.device_id, $event.target.value)"
                                            @change="refreshBatchRenamePreviews()"
                                            :disabled="batchRename.previewing || batchRename.submitting">
-                                    <div class="text-xs text-blue-600 mt-1 truncate" x-text="row.new_name"></div>
+                                    <div class="text-xs text-blue-700 mt-1 truncate">
+                                        <span class="font-medium" x-text="t('device.new_name')">New name</span>:
+                                        <span x-text="row.new_name"></span>
+                                    </div>
                                 </div>
                                 <button @click="row.preview_open = !row.preview_open"
                                         class="btn btn-ghost btn-sm"
@@ -2295,10 +2331,20 @@
 
                             <div x-show="row.preview_open" class="border-t bg-gray-50 max-h-56 overflow-y-auto">
                                 <template x-for="change in row.entity_changes" :key="change.old_id">
-                                    <div class="px-4 py-2 border-b last:border-b-0 text-xs grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center">
-                                        <span class="font-mono text-gray-500 truncate" x-text="change.old_id"></span>
+                                    <div class="px-4 py-2 border-b last:border-b-0 text-xs grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-3 items-center">
+                                        <div class="min-w-0">
+                                            <div class="font-semibold uppercase tracking-wide text-[0.65rem] text-gray-500 mb-0.5"
+                                                 x-text="t('entity.current_values')">Current</div>
+                                            <div class="text-gray-700 truncate" x-text="change.old_name || t('entity.no_name')"></div>
+                                            <code class="font-mono text-gray-500 truncate block" x-text="change.old_id"></code>
+                                        </div>
                                         <i class="ri-arrow-right-line text-gray-400"></i>
-                                        <span class="font-mono text-green-700 truncate" x-text="change.new_id"></span>
+                                        <div class="min-w-0">
+                                            <div class="font-semibold uppercase tracking-wide text-[0.65rem] text-green-700 mb-0.5"
+                                                 x-text="t('entity.after_applying')">After applying</div>
+                                            <div class="text-green-700 truncate" x-text="change.new_name || t('entity.no_name')"></div>
+                                            <code class="font-mono text-green-700 truncate block" x-text="change.new_id"></code>
+                                        </div>
                                     </div>
                                 </template>
                             </div>
@@ -2785,6 +2831,7 @@
                 selectedEntityData: null,
                 devicePreviewBaseName: null,  // Temporary preview while editing device name
                 resetEntityIds: false,
+                resetPreviewing: false,
                 renamingDevice: false,  // Loading state for device rename
                 syncingZ2m: false,  // Loading state for Z2M name sync
                 applyingEntityId: null,  // ID of entity currently being renamed
@@ -3407,7 +3454,7 @@
                         entities = entities.filter(e => !e.disabled_by);
                     }
                     if (this.onlyChanges) {
-                        entities = entities.filter(e => this.entityNeedsRename(e));
+                        entities = entities.filter(e => this.entityListNeedsRename(e));
                     }
 
                     // Sort alphabetically by base_name or original_name (using browser locale)
@@ -4128,9 +4175,11 @@
                                 registry_id: entry.entity.registry_id
                             };
                             entry.row.planned_entities.push(plan);
-                            const nameChanged = plan.user_name !== null && plan.user_name !== undefined
-                                ? !this.sameEntityBaseName(plan.user_name, plan.expected_base)
-                                : plan.old_name !== plan.new_name;
+                            const nameChanged = this.batchRename.resetEntityIds
+                                ? plan.old_name !== plan.new_name
+                                : (plan.user_name !== null && plan.user_name !== undefined
+                                    ? !this.sameEntityBaseName(plan.user_name, plan.expected_base)
+                                    : plan.old_name !== plan.new_name);
                             if (plan.old_id !== plan.new_id || nameChanged) {
                                 entry.row.entity_changes.push(plan);
                             }
@@ -4355,6 +4404,74 @@
                     return entity._previewId || entity.id;
                 },
 
+                getEntityListPreviewName(entity) {
+                    if (this.resetEntityIds && entity.device_id === this.selectedDevice) {
+                        return entity._resetPreviewName ?? this.t('messages.loading');
+                    }
+                    return entity._previewName ?? this.getEntityFriendlyName(entity);
+                },
+
+                getEntityListPreviewId(entity) {
+                    if (this.resetEntityIds && entity.device_id === this.selectedDevice) {
+                        return entity._resetPreviewId || entity.id;
+                    }
+                    return entity._previewId || this.getNewEntityId(entity);
+                },
+
+                entityListNeedsRename(entity) {
+                    if (!this.resetEntityIds || entity.device_id !== this.selectedDevice) {
+                        return this.entityNeedsRename(entity);
+                    }
+                    if (this.resetPreviewing || !entity._resetPreviewName || !entity._resetPreviewId) {
+                        return true;
+                    }
+                    return entity.id !== entity._resetPreviewId || entity.original_name !== entity._resetPreviewName;
+                },
+
+                async refreshSingleResetPreviews() {
+                    const requestVersion = (this.singleResetPreviewVersion || 0) + 1;
+                    this.singleResetPreviewVersion = requestVersion;
+                    if (!this.resetEntityIds || !this.selectedDeviceData) {
+                        this.resetPreviewing = false;
+                        this.previewVersion++;
+                        return;
+                    }
+
+                    this.resetPreviewing = true;
+                    try {
+                        const entities = this.hierarchy.entities.filter(entity => entity.device_id === this.selectedDevice);
+                        const deviceBase = (this.devicePreviewBaseName ?? this.selectedDeviceData.base_name ?? '').trim();
+                        const contexts = entities.map(entity => {
+                            const nativeSuffix = entity.native_base_name ?? entity.base_name ?? '';
+                            const context = this.entityNamingContext(entity, nativeSuffix);
+                            context.device = deviceBase;
+                            return context;
+                        });
+                        const response = await fetch('api/naming_templates/preview_batch', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({templates: this.namingConfig.templates, contexts})
+                        });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.error || 'Failed to preview entity reset');
+                        if (requestVersion !== this.singleResetPreviewVersion || !this.resetEntityIds) return;
+                        entities.forEach((entity, index) => {
+                            entity._resetPreviewName = data.rendered[index].entity_name;
+                            entity._resetPreviewId = data.rendered[index].entity_id;
+                        });
+                        this.previewVersion++;
+                    } catch (error) {
+                        if (requestVersion === this.singleResetPreviewVersion) {
+                            this.showMessage(error.message, 'error');
+                        }
+                    } finally {
+                        if (requestVersion === this.singleResetPreviewVersion) {
+                            this.resetPreviewing = false;
+                            this.previewVersion++;
+                        }
+                    }
+                },
+
                 // Live preview versions - use _editValue for real-time updates
                 getEntityFriendlyNameLive(entity) {
                     const parts = [];
@@ -4571,6 +4688,12 @@
                 isEntityIdTaken(entity) {
                     const newId = entity._previewId || this.getNewEntityIdForEntity(entity);
                     if (newId === entity.id) return false; // Same ID, no conflict
+                    return this.hierarchy.entities.some(e => e.id === newId && e.registry_id !== entity.registry_id);
+                },
+
+                isEntityListIdTaken(entity) {
+                    const newId = this.getEntityListPreviewId(entity);
+                    if (newId === entity.id) return false;
                     return this.hierarchy.entities.some(e => e.id === newId && e.registry_id !== entity.registry_id);
                 },
 

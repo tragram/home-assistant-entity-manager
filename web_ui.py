@@ -2613,7 +2613,7 @@ def _plan_device_entity_changes(
             states_by_id.get(entity_id, {}),
             None if reset_entity_ids else preserved_entity_names.get(entity_id),
         )
-        if entity_id in preserved_user_names:
+        if not reset_entity_ids and entity_id in preserved_user_names:
             new_friendly_name = preserved_user_names[entity_id]
         changes.append((entity_id, new_entity_id, new_friendly_name))
     return changes
@@ -2651,9 +2651,9 @@ async def rename_device_handler(job, ctx):
 
     Renames the device, aligns the Z2M friendly name, then for every entity of
     the device rebuilds its friendly name and entity ID and rewrites references
-    in automations, scenes, scripts, and storage dashboards. Progress is reported
-    per entity so the UI can show a live bar. YAML dashboards are reported for
-    manual editing.
+    in groups, automations, scenes, scripts, and storage dashboards. Progress is
+    reported per entity so the UI can show a live bar. YAML dashboards are
+    reported for manual editing.
     """
     payload = job["payload"]
     device_id = payload["device_id"]

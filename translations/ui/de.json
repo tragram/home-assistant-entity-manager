@@ -83,7 +83,14 @@
     "delete_entity": "Entität löschen",
     "apply_rename": "Umbenennung anwenden",
     "enable": "Aktivieren",
-    "no_name": "(kein Name)"
+    "no_name": "(kein Name)",
+    "row_guide": "So liest du die Entitätszeilen:",
+    "needs_change": "Änderung erforderlich",
+    "already_correct": "Bereits korrekt",
+    "current_values_guide": "Grau = aktueller Name und ID",
+    "proposed_values_guide": "Grün = Ergebnis nach dem Anwenden",
+    "current_values": "Aktuell",
+    "after_applying": "Nach dem Anwenden"
   },
   "virtual_devices": {
     "automations": "Automatisierungen",
@@ -178,8 +185,8 @@
     "select_area": "Bereich auswählen",
     "disabled_badge": "deaktiviert",
     "filter_placeholder": "Geräte filtern...",
-    "reset_entity_ids": "Alle Entitäts-IDs zurücksetzen",
-    "reset_entity_ids_hint": "IDs aus den aktuellen Namensvorlagen neu erstellen und Entitätsnamen beibehalten."
+    "reset_entity_ids": "Alle Entitäts-IDs und Namen zurücksetzen",
+    "reset_entity_ids_hint": "Alle Entitäts-IDs und Anzeigenamen aus den aktuellen Namensvorlagen neu erstellen."
   },
   "batch_rename": {
     "select_devices": "Geräte auswählen",
