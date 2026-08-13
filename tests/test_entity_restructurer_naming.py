@@ -91,6 +91,19 @@ def test_presets_render_registry_context(
     assert restructurer.generate_device_name("device-1") == expected_device_name
 
 
+def test_device_rename_cascades_to_generated_entity_id_without_reset(restructurer):
+    """Changing a device name normally replaces its component in entity IDs."""
+    restructurer.naming_templates.apply_preset("home_assistant")
+    preserved_suffix = restructurer.build_naming_context("sensor.existing_id", {})["entity"]
+    restructurer.devices["device-1"]["name"] = "Thermostat"
+
+    assert restructurer.generate_new_entity_id(
+        "sensor.living_room_controller_temperature",
+        {},
+        preserved_suffix,
+    ) == ("sensor.living_room_thermostat_temperature", "Temperature")
+
+
 @pytest.mark.parametrize(
     ("domain", "original_name", "expected_suffix"),
     [

@@ -1814,7 +1814,7 @@
                                class="edit-input flex-1"
                                x-ref="deviceNameInput"
                                :value="devicePreviewBaseName !== null ? devicePreviewBaseName : selectedDeviceData?.base_name"
-                               @input.debounce.250ms="devicePreviewBaseName = $event.target.value; if (resetEntityIds) refreshSingleResetPreviews()"
+                               @input.debounce.250ms="updateDeviceBaseNamePreview($event.target.value)"
                                :placeholder="selectedDeviceData?.base_name"
                                :disabled="renamingDevice || applyingEntityId || executing">
                     </div>
@@ -2286,8 +2286,11 @@
                     </button>
                 </div>
 
-                <div class="overflow-y-auto p-5 space-y-3">
-                    <div x-show="batchRename.previewing" class="text-sm text-blue-600 flex items-center gap-2">
+                <div class="relative overflow-y-auto p-5 space-y-3">
+                    <!-- Overlay status: preview refreshes must not shift the rows. -->
+                    <div x-show="batchRename.previewing"
+                         x-cloak
+                         class="absolute top-3 right-5 z-10 pointer-events-none text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-3 py-1.5 shadow-sm flex items-center gap-2">
                         <i class="ri-loader-4-line animate-spin"></i>
                         <span x-text="t('batch_rename.building_preview')">Building preview…</span>
                     </div>
@@ -4137,6 +4140,16 @@
                     }
                 },
 
+                updateDeviceBaseNamePreview(value) {
+                    this.devicePreviewBaseName = value;
+                    // A normal device rename cascades into every generated
+                    // entity ID. Rebuild those previews with the edited device
+                    // base immediately; reset is only for discarding suffix
+                    // customizations, not for propagating the device rename.
+                    this.invalidateEntityPreviews();
+                    if (this.resetEntityIds) this.refreshSingleResetPreviews();
+                },
+
                 batchDevicesForArea(areaId) {
                     return this.devicesForCategory(areaId);
                 },
@@ -4734,6 +4747,22 @@
                         // Skip if already computed (e.g. from user edit) or just renamed
                         if ((entity._previewName !== null && entity._previewName !== undefined) || entity._justRenamed) continue;
 
+                        // Backend suggestions use the currently saved device
+                        // name. While that name is being edited, render every
+                        // affected entity from the live device context instead.
+                        const usesEditedDeviceName = this.devicePreviewBaseName !== null &&
+                            entity.device_id === this.selectedDevice;
+                        if (usesEditedDeviceName) {
+                            const suffix = this.getEntitySuffix(entity);
+                            entity._previewName = this.renderNamingTemplate(
+                                this.namingConfig.templates.entity_name,
+                                this.entityNamingContext(entity, suffix)
+                            );
+                            entity._previewId = null;
+                            mapped.push({entity, suffix});
+                            continue;
+                        }
+
                         // User mappings take priority over backend suggestions.
                         // They are UI-managed and therefore must be supplied as
                         // the entity context when requesting the exact preview.
@@ -4860,7 +4889,7 @@
                     const areaId = entity?.area_id || device?.area_id;
                     const area = this.hierarchy.areas.find(a => a.id === areaId);
                     const domain = entity?.id?.split('.')[0] || '';
-                    return {
+                    const context = {
                         ...this.baseNamingContext(area, device),
                         entity: suffix !== null ? suffix : this.getEntitySuffix(entity),
                         entity_id: entity?.id?.split('.').pop() || '',
@@ -4868,6 +4897,10 @@
                         device_class: entity?.device_class || '',
                         integration: entity?.platform || device?.integrations?.[0] || ''
                     };
+                    if (device?.id === this.selectedDevice && this.devicePreviewBaseName !== null) {
+                        context.device = this.devicePreviewBaseName;
+                    }
+                    return context;
                 },
 
                 async previewEntityNaming(entity, suffix = null) {
