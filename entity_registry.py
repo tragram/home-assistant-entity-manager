@@ -6,6 +6,8 @@ from label_registry import LabelRegistry
 
 logger = logging.getLogger(__name__)
 
+_NAME_UNSET = object()
+
 
 class EntityRegistry:
     # Optional shared audit log for entity_id renames. Set once by the web app
@@ -34,7 +36,7 @@ class EntityRegistry:
         self,
         entity_id: str,
         new_entity_id: Optional[str] = None,
-        name: Optional[str] = None,
+        name: Any = _NAME_UNSET,
         labels: Optional[List[str]] = None,
         disabled_by: Optional[str] = None,
         enable: bool = False,
@@ -43,12 +45,12 @@ class EntityRegistry:
 
         if new_entity_id:
             message["new_entity_id"] = new_entity_id
-        if name is not None:
-            # Home Assistant distinguishes a missing ``name`` field from an
-            # explicit JSON null. Generated main entities intentionally have
-            # an empty suffix, so clear their user override instead of storing
-            # an empty string as the override.
-            message["name"] = name or None
+        if name is not _NAME_UNSET:
+            # These are three distinct Home Assistant operations:
+            # omitted = preserve the current override, null = remove it and
+            # fall back to the integration name, "" = explicitly no entity
+            # suffix. Do not collapse an intentional blank into JSON null.
+            message["name"] = name
         if labels is not None:
             message["labels"] = labels
         if enable:
@@ -75,7 +77,7 @@ class EntityRegistry:
         self,
         old_entity_id: str,
         new_entity_id: str,
-        friendly_name: Optional[str] = None,
+        friendly_name: Any = _NAME_UNSET,
         enable: bool = False,
     ) -> Dict[str, Any]:
         result = await self.update_entity(
@@ -87,7 +89,8 @@ class EntityRegistry:
         # break the rename itself.
         if self.rename_log is not None and new_entity_id and new_entity_id != old_entity_id:
             try:
-                self.rename_log.record(old_entity_id, new_entity_id, friendly_name)
+                logged_name = None if friendly_name is _NAME_UNSET else friendly_name
+                self.rename_log.record(old_entity_id, new_entity_id, logged_name)
             except Exception as error:  # noqa: BLE001 - audit log must not break renames
                 logger.warning("Failed to record rename in audit log: %s", error)
 

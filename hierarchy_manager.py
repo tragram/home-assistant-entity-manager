@@ -327,7 +327,11 @@ class HierarchyManager:
                 device_id=device_id,
                 area_id=area_id if not device_id else None,
                 device_class=entity_data.get("device_class") or entity_data.get("original_device_class"),
-                original_name=entity_data.get("name") or entity_data.get("original_name"),
+                original_name=(
+                    entity_data.get("name")
+                    if entity_data.get("name") is not None
+                    else entity_data.get("original_name")
+                ),
                 base_name=base_name,
                 override_name=override,
                 disabled_by=entity_data.get("disabled_by"),
@@ -371,7 +375,13 @@ class HierarchyManager:
             Base name for the entity
         """
         # Get original friendly name from HA
-        original_name = entity_data.get("name") or entity_data.get("original_name") or ""
+        user_name = entity_data.get("name")
+        original_name = user_name if user_name is not None else (entity_data.get("original_name") or "")
+
+        # An explicit blank user name is a real main-entity suffix, not a
+        # missing value that should fall through to device_class or entity_id.
+        if user_name == "":
+            return ""
 
         # Try to strip device+area prefix from original name
         if original_name:

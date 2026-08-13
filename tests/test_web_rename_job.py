@@ -32,10 +32,15 @@ def test_rename_device_enqueues_job(client):
     assert store.load(body["job_id"])["payload"] == {"device_id": "dev1", "new_name": "Kitchen Light"}
 
 
-def test_blank_entity_override_does_not_match_cleared_name() -> None:
-    """Apply All must send the repair from an explicit blank override to null."""
-    assert web_ui._entity_registry_name_matches({"name": "", "original_name": None}, "") is False
+def test_blank_entity_override_is_distinct_from_cleared_name() -> None:
+    """An explicit blank suppresses the native name; null exposes it."""
+    assert web_ui._effective_registry_name({"name": "", "original_name": "Native"}) == ""
+    assert web_ui._effective_registry_name({"name": None, "original_name": "Native"}) == "Native"
+    assert web_ui._entity_registry_name_matches({"name": "", "original_name": "Native"}, "") is True
+    assert web_ui._entity_registry_name_matches({"name": None, "original_name": "Native"}, "") is False
     assert web_ui._entity_registry_name_matches({"name": None, "original_name": None}, "") is True
+    assert web_ui._entity_registry_name_matches({"name": None, "original_name": "Native"}, None) is True
+    assert web_ui._entity_registry_name_matches({"name": "Custom", "original_name": "Native"}, None) is False
 
 
 def test_entity_name_match_prefers_user_override() -> None:
@@ -420,6 +425,49 @@ def test_single_entity_rename_can_clear_friendly_name(monkeypatch) -> None:
 
     assert response.get_json()["success"] is True
     assert calls == [("light.kitchen_lamp", None, "")]
+
+
+def test_single_entity_rename_can_remove_friendly_name_override(monkeypatch) -> None:
+    """An explicit null reaches HA and removes the registry name override."""
+    calls = []
+
+    class FakeWebSocket:
+        def __init__(self, url: str, token: str) -> None:
+            pass
+
+        async def connect(self) -> None:
+            pass
+
+        async def disconnect(self) -> None:
+            pass
+
+    class FakeEntityRegistry:
+        def __init__(self, websocket: FakeWebSocket) -> None:
+            pass
+
+        async def rename_entity(
+            self,
+            old_entity_id: str,
+            new_entity_id: str | None,
+            friendly_name: str | None,
+        ) -> dict:
+            calls.append((old_entity_id, new_entity_id, friendly_name))
+            return {"entity_id": old_entity_id}
+
+    monkeypatch.setenv("HA_URL", "http://homeassistant:8123")
+    monkeypatch.setenv("HA_TOKEN", "token")
+    monkeypatch.setattr(web_ui, "HomeAssistantWebSocket", FakeWebSocket)
+    monkeypatch.setattr(web_ui, "EntityRegistry", FakeEntityRegistry)
+
+    with web_ui.app.test_request_context(
+        "/api/rename_entity",
+        method="POST",
+        json={"old_entity_id": "light.kitchen_lamp", "new_friendly_name": None},
+    ):
+        response = asyncio.run(web_ui._rename_entity_async())
+
+    assert response.get_json()["success"] is True
+    assert calls == [("light.kitchen_lamp", None, None)]
 
 
 def test_device_rename_updates_dashboards_when_dependency_update_fails(monkeypatch) -> None:

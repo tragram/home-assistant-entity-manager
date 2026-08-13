@@ -3,8 +3,31 @@
 import pytest
 
 from entity_restructurer import EntityRestructurer
+from hierarchy_manager import HierarchyManager
 from naming_overrides import NamingOverrides
 from naming_templates import NamingTemplates
+
+
+def test_hierarchy_preserves_explicit_blank_entity_name() -> None:
+    """A blank HA override must not fall through to the native name or ID."""
+    hierarchy = HierarchyManager()
+    hierarchy.load_from_ha(
+        areas={"bar": {"name": "Bar"}},
+        devices={"audio": {"name": "Bar Audio", "area_id": "bar"}},
+        entities={
+            "media_player.bar_audio": {
+                "id": "registry-1",
+                "device_id": "audio",
+                "name": "",
+                "original_name": "Powernode Reproduktory Media",
+                "has_entity_name": True,
+            }
+        },
+    )
+
+    entity = hierarchy.entities["registry-1"]
+    assert entity.original_name == ""
+    assert entity.base_name == ""
 
 
 class FakeTypeMappings:

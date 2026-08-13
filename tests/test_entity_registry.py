@@ -22,8 +22,8 @@ class MockWebSocket:
         return {"id": 1, "success": True, "result": {}}
 
 
-def test_empty_name_is_sent_as_null_to_clear_registry_override() -> None:
-    """An empty generated name must clear, rather than blank, an override."""
+def test_empty_name_is_sent_as_explicit_blank_override() -> None:
+    """An empty suffix must suppress, rather than expose, the native name."""
     websocket = MockWebSocket()
 
     asyncio.run(EntityRegistry(websocket).update_entity("light.old", new_entity_id="light.new", name=""))
@@ -33,6 +33,21 @@ def test_empty_name_is_sent_as_null_to_clear_registry_override() -> None:
             "type": "config/entity_registry/update",
             "entity_id": "light.old",
             "new_entity_id": "light.new",
+            "name": "",
+        }
+    ]
+
+
+def test_null_name_clears_registry_override() -> None:
+    """JSON null removes the override and falls back to the native name."""
+    websocket = MockWebSocket()
+
+    asyncio.run(EntityRegistry(websocket).update_entity("light.old", name=None))
+
+    assert websocket.messages == [
+        {
+            "type": "config/entity_registry/update",
+            "entity_id": "light.old",
             "name": None,
         }
     ]

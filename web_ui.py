@@ -593,7 +593,7 @@ async def load_areas_and_entities():
             entities_by_area[area_name]["domains"][domain].append(
                 {
                     "entity_id": entity_id,
-                    "friendly_name": entity_reg.get("name") or entity_reg.get("original_name") or entity_id,
+                    "friendly_name": _effective_registry_name(entity_reg, entity_id),
                     "state": "orphan" if is_orphan else "disabled",
                     "disabled_by": entity_reg.get("disabled_by"),
                     "is_orphan": is_orphan,
@@ -925,8 +925,8 @@ async def _preview_changes_async():
                 renamer_state["naming_overrides"].get_entity_override(registry_id) if registry_id else None
             )
 
-            current_friendly_name = (
-                entity_reg.get("name") or entity_reg.get("original_name") or current_info.get("friendly_name", old_id)
+            current_friendly_name = _effective_registry_name(
+                entity_reg, current_info.get("friendly_name", old_id)
             )
 
             # Extract current basename from friendly_name by removing device name prefix
@@ -1230,7 +1230,7 @@ async def _execute_changes_async():
 
                 # Check if entity ID or friendly name needs to be changed
                 entity_reg = renamer_state["restructurer"].entities.get(old_id, {})
-                current_friendly_name = entity_reg.get("name") or entity_reg.get("original_name") or ""
+                current_friendly_name = _effective_registry_name(entity_reg)
 
                 needs_id_change = old_id != new_id
                 needs_friendly_name_change = current_friendly_name != friendly_name
@@ -2338,8 +2338,9 @@ async def _rename_entity_async():
 
     old_entity_id = sanitize_entity_id(data.get("old_entity_id"))
     new_entity_id = sanitize_entity_id(data.get("new_entity_id")) if data.get("new_entity_id") else None
-    has_friendly_name = "new_friendly_name" in data and data.get("new_friendly_name") is not None
-    new_friendly_name = sanitize_name(data.get("new_friendly_name"))
+    has_friendly_name = "new_friendly_name" in data
+    raw_friendly_name = data.get("new_friendly_name")
+    new_friendly_name = None if raw_friendly_name is None else sanitize_name(raw_friendly_name)
 
     if not old_entity_id:
         return jsonify({"error": "Invalid old_entity_id"}), 400
@@ -2629,18 +2630,32 @@ def _plan_device_entity_changes(
     return changes
 
 
+def _effective_registry_name(entity_info: dict[str, Any], fallback: str = "") -> str:
+    """Return HA's effective entity name without treating ``""`` as missing."""
+    user_name = entity_info.get("name")
+    if user_name is not None:
+        return user_name
+    original_name = entity_info.get("original_name")
+    return original_name if original_name is not None else fallback
+
+
 def _entity_registry_name_matches(entity_info: dict[str, Any], desired_name: Optional[str]) -> bool:
     """Return whether HA already stores the requested entity-name state.
 
-    An empty generated name means "remove the user override".  A registry
-    ``name`` of ``""`` is still an explicit override and therefore needs an
-    update to JSON null; it must not be treated as equivalent to no override.
+    ``None`` removes the user override and falls back to the integration name.
+    ``""`` is an explicit blank override, used for a main entity with no
+    entity-specific suffix. Those states are deliberately not equivalent.
     """
     user_name = entity_info.get("name")
-    if desired_name == "":
+    if desired_name is None:
         return user_name is None
-    current_name = user_name if user_name is not None else entity_info.get("original_name")
-    return desired_name == current_name
+    if user_name is not None:
+        return desired_name == user_name
+    if desired_name == "":
+        # No override plus no integration name is already effectively blank;
+        # do not create a pointless change that reappears after every reset.
+        return not entity_info.get("original_name")
+    return desired_name == _effective_registry_name(entity_info)
 
 
 def _object_references_any(value: Any, references: set[str]) -> bool:
@@ -3206,12 +3221,14 @@ async def _get_hierarchy_async():
             device_data = restructurer.devices.get(device_id, {}) if device_id else {}
             area_id = entity_data.get("area_id") or device_data.get("area_id")
 
-            # Get original friendly name
-            original_name = entity_data.get("name") or entity_data.get("original_name") or ""
+            # Effective entity name. An explicit empty registry name suppresses
+            # the integration-provided name, so use a None check rather than a
+            # truthiness fallback here.
+            user_name = entity_data.get("name")
+            original_name = _effective_registry_name(entity_data)
 
             entity_context = restructurer.build_naming_context(entity_id, entity_data)
             native_base_name = entity_context["entity"]
-            user_name = entity_data.get("name")
             if user_name is not None:
                 raw_device_name = (
                     device_data.get("name_by_user")

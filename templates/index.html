@@ -2167,6 +2167,23 @@
                                                 <i class="ri-error-warning-line"></i> <span x-text="t('entity.id_conflict')">ID conflict</span>
                                             </span>
                                         </div>
+                                        <div x-show="entity.user_name !== null && entity.user_name !== undefined"
+                                             class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                                            <div class="min-w-0">
+                                                <div class="text-sm font-medium text-blue-900" x-text="t('entity.saved_name_override')">
+                                                    A custom entity name is stored in Home Assistant
+                                                </div>
+                                                <div class="text-xs text-blue-700" x-text="t('entity.reset_name_override_hint')">
+                                                    Remove it and return to the name provided by the integration. The entity ID will not change.
+                                                </div>
+                                            </div>
+                                            <button @click="resetEntityNameOverride(entity)"
+                                                    class="btn btn-sm btn-outline whitespace-nowrap"
+                                                    :disabled="applyingEntityId === entity.id">
+                                                <i class="ri-restart-line mr-1"></i>
+                                                <span x-text="t('entity.reset_name_override')">Reset to integration name</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </template>
@@ -4287,17 +4304,18 @@
                                 old_id: entry.entity.id,
                                 new_id: rendered.entity_id,
                                 old_name: entry.entity.original_name ?? '',
-                                new_name: rendered.entity_name,
+                                // The worker preserves HA name overrides during
+                                // a device rename, including an explicit blank.
+                                new_name: !this.batchRename.resetEntityIds &&
+                                    entry.entity.user_name !== null && entry.entity.user_name !== undefined
+                                    ? entry.entity.user_name
+                                    : rendered.entity_name,
                                 user_name: entry.entity.user_name,
                                 expected_base: entry.context.entity,
                                 registry_id: entry.entity.registry_id
                             };
                             entry.row.planned_entities.push(plan);
-                            const nameChanged = this.batchRename.resetEntityIds
-                                ? plan.old_name !== plan.new_name
-                                : (plan.user_name !== null && plan.user_name !== undefined
-                                    ? plan.user_name === '' || !this.sameEntityBaseName(plan.user_name, plan.expected_base)
-                                    : plan.old_name !== plan.new_name);
+                            const nameChanged = plan.old_name !== plan.new_name;
                             if (plan.old_id !== plan.new_id || nameChanged) {
                                 entry.row.entity_changes.push(plan);
                             }
@@ -4666,21 +4684,11 @@
                     // Use cached preview values (computed once in precomputeEntityPreviews)
                     const newName = entity._previewName ?? this.getEntityFriendlyNameForEntity(entity);
                     const newId = entity._previewId || this.getNewEntityIdForEntity(entity);
+                    const explicitEdit = entity._currentSuffix !== undefined;
+                    const renameName = this.entityNameForRename(entity, newName);
 
                     if (entity.id !== newId) return true;
-
-                    // HA's registry `name` is an intentional user override. Do
-                    // not try to expand it back into the full generated friendly
-                    // name; compare only its entity-specific suffix. Resetting
-                    // that override remains an explicit edit action.
-                    if (entity.user_name !== null && entity.user_name !== undefined) {
-                        // An explicit empty string is a stale HA override, not
-                        // the same thing as having no override at all.
-                        if (entity.user_name === '') return true;
-                        return !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity));
-                    }
-
-                    return entity.original_name !== newName;
+                    return this.entityRegistryNameNeedsUpdate(entity, renameName, explicitEdit);
                 },
 
                 sameEntityBaseName(left, right) {
@@ -4689,11 +4697,29 @@
                 },
 
                 entityNameForRename(entity, generatedName) {
+                    // An explicit edit wins even when it renders to an empty
+                    // string. Empty suppresses HA's integration-provided name.
+                    if (entity._currentSuffix !== undefined) {
+                        return generatedName;
+                    }
                     if (entity.user_name !== null && entity.user_name !== undefined &&
                         this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity))) {
                         return entity.user_name;
                     }
                     return generatedName;
+                },
+
+                entityRegistryNameNeedsUpdate(entity, desiredName, explicitEdit = false) {
+                    if (desiredName === null) {
+                        return entity.user_name !== null && entity.user_name !== undefined;
+                    }
+                    if (explicitEdit) {
+                        return entity.user_name !== desiredName;
+                    }
+                    if (entity.user_name !== null && entity.user_name !== undefined) {
+                        return entity.user_name !== desiredName;
+                    }
+                    return entity.original_name !== desiredName;
                 },
 
                 // Get friendly name using entity's own device/area (not selected)
@@ -5131,6 +5157,18 @@
                     // Trim suffix before saving
                     if (entity._currentSuffix !== undefined) {
                         entity._currentSuffix = entity._currentSuffix.trim();
+                        try {
+                            // Do not use a slug from the previous keystroke if
+                            // the check button is clicked before the debounce
+                            // finishes. Resolve both fields from one fresh
+                            // backend preview.
+                            const rendered = await this.previewEntityNaming(entity, entity._currentSuffix);
+                            entity._previewName = rendered.entity_name;
+                            entity._previewId = rendered.entity_id;
+                        } catch (error) {
+                            this.showMessage('Error: ' + error.message, 'error');
+                            return;
+                        }
                     }
 
                     // Check for conflicts
@@ -5144,9 +5182,11 @@
                     const newName = entity._previewName ?? this.getEntityFriendlyNameForEntity(entity);
                     const renameName = this.entityNameForRename(entity, newName);
                     const idChanged = entity.id !== newId;
-                    const nameChanged = entity.user_name !== null && entity.user_name !== undefined
-                        ? entity.user_name === '' || !this.sameEntityBaseName(entity.user_name, this.getEntitySuffix(entity))
-                        : entity.original_name !== newName;
+                    const nameChanged = this.entityRegistryNameNeedsUpdate(
+                        entity,
+                        renameName,
+                        entity._currentSuffix !== undefined
+                    );
 
                     if (!idChanged && !nameChanged) {
                         this.showMessage('No changes needed', 'info');
@@ -5171,6 +5211,7 @@
                         if (data.success) {
                             // Update local entity data
                             entity.id = newId;
+                            entity.user_name = renameName;
                             entity.original_name = renameName;
                             // Update base_name to the new suffix so input field shows correct value
                             if (entity._currentSuffix !== undefined) {
@@ -5214,6 +5255,8 @@
                         this.namingConfig.templates.entity_name,
                         context
                     );
+                    // The previous slug no longer describes the current input.
+                    entity._previewId = null;
 
                     // Slug comes from the backend (source of truth), debounced so we don't
                     // fire a request on every keystroke. The friendly-name preview updates
@@ -5359,6 +5402,41 @@
                     const original = entity.native_base_name ?? entity.base_name ?? '';
                     entity._currentSuffix = original;
                     this.updateEntityPreview(entity, original);
+                },
+
+                // Remove HA's stored user-name override. This is deliberately
+                // different from entering an empty suffix, which stores "" to
+                // suppress the integration name.
+                async resetEntityNameOverride(entity) {
+                    if (!entity || this.applyingEntityId) return;
+
+                    const entityId = entity.id;
+                    const registryId = entity.registry_id;
+                    this.applyingEntityId = entityId;
+                    try {
+                        const response = await fetch('api/rename_entity', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                old_entity_id: entityId,
+                                new_entity_id: null,
+                                new_friendly_name: null
+                            })
+                        });
+                        const data = await response.json();
+                        if (!response.ok || !data.success) {
+                            throw new Error(data.error || 'Failed to reset entity name');
+                        }
+
+                        await this.loadHierarchy();
+                        const refreshed = this.hierarchy.entities.find(item => item.registry_id === registryId);
+                        if (refreshed) refreshed._expanded = true;
+                        this.showMessage(this.t('entity.reset_name_override_done'), 'success');
+                    } catch (error) {
+                        this.showMessage('Error: ' + error.message, 'error');
+                    } finally {
+                        this.applyingEntityId = null;
+                    }
                 },
 
                 // Check if entity is orphaned (no longer provided by integration)
@@ -5528,6 +5606,7 @@
                         );
                         const newName = rendered.entity_name;
                         const newId = rendered.entity_id;
+                        const explicitEdit = entity._currentSuffix !== undefined;
 
                         // Prevent renaming to an entity ID that another entity already uses
                         if (newId !== entity.id &&
@@ -5538,7 +5617,7 @@
 
                         // Check if rename is actually needed
                         const idChanged = entity.id !== newId;
-                        const nameChanged = entity.original_name !== newName;
+                        const nameChanged = this.entityRegistryNameNeedsUpdate(entity, newName, explicitEdit);
 
                         if (!idChanged && !nameChanged) {
                             entity._expanded = false;
@@ -5565,6 +5644,7 @@
 
                             // Update local entity data
                             entity.id = newId;
+                            entity.user_name = newName;
                             entity.original_name = newName;
                             // Update base_name to the new suffix so input field shows correct value
                             if (entity._currentSuffix !== undefined) {
