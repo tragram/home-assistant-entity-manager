@@ -47,6 +47,7 @@ test_results/
 .coverage
 htmlcov/
 .pytest_cache/
+.pytest-tmp/
 .tox/
 
 # Local configuration

@@ -1,4 +1,4 @@
-"""Generated API token for external, read-only access to the rename log.
+"""Generated bearer token for explicit direct API access.
 
 A single token is generated on demand (never user-chosen), shown to the user
 exactly once, and persisted only as a SHA-256 hash in ``/data`` so the plaintext
@@ -15,6 +15,8 @@ import os
 import secrets
 import threading
 from typing import Any, Dict
+
+from atomic_json import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +51,7 @@ class ApiTokenStore:
             return {}
 
     def _write(self, data: Dict[str, Any]) -> None:
-        with open(self.path, "w", encoding="utf-8") as handle:
-            json.dump(data, handle)
+        write_json_atomic(self.path, data)
 
     def exists(self) -> bool:
         """True when a token has been generated and not revoked."""

@@ -125,6 +125,18 @@ class _DU(_Rec):
         self.calls.append((old, new))
 
 
+class _FailingDU(_DU):
+    async def update_all_dependencies(self, old, new, states=None):
+        self.calls.append((old, new))
+        return {"total_failed": 1}
+
+
+class _BatchDU(_DU):
+    async def update_all_dependencies_batch(self, pairs, cached_states=None):
+        self.calls.append(list(pairs))
+        return {"total_failed": 0}
+
+
 class _Bridge(_Rec):
     async def rename_native(self, device_data, new_name):
         from integration_bridge import BridgeResult
@@ -227,6 +239,90 @@ def test_executor_idempotent_resume(tmp_path):
     ex = SwapExecutor(store, _DR(), _ER(), _DU(), _Bridge(), _RS(), states_by_id={}, timestamp="t2")
     again = asyncio.run(ex.run(out))
     assert again["state"] == device_swap.STATE_COMPLETED
+
+
+def test_dependency_failure_stops_swap_before_disposal(tmp_path):
+    job = _job()
+    store = SwapJobStore(str(tmp_path))
+    device_registry = _DR()
+    executor = SwapExecutor(
+        store,
+        device_registry,
+        _ER(),
+        _FailingDU(),
+        _Bridge(),
+        _RS(),
+        states_by_id={},
+        timestamp="t1",
+    )
+
+    import asyncio
+
+    result = asyncio.run(executor.run(job))
+
+    assert result["state"] == device_swap.STATE_FAILED
+    assert result["failed_step"] == device_swap.STATE_UPDATING_DEPENDENCIES
+    assert not any(call[2].endswith("(ersetzt)") for call in device_registry.calls)
+
+
+def test_swap_updates_entity_dependencies_as_one_batch(tmp_path):
+    import asyncio
+
+    job = _job()
+    job["old_device"]["device_id"] = "same"
+    job["new_device"]["device_id"] = "same"
+    job["entity_mapping"].append(
+        {
+            "old_entity_id": "sensor.old_battery",
+            "new_entity_id_current": "sensor.new_battery",
+            "status": "pending",
+        }
+    )
+    updater = _BatchDU()
+    executor = SwapExecutor(
+        SwapJobStore(str(tmp_path)), _DR(), _ER(), updater, _Bridge(), _RS(), states_by_id={}, timestamp="t1"
+    )
+
+    asyncio.run(executor._update_dependencies(job))
+
+    assert updater.calls == [[
+        ("binary_sensor.kuche_fenster_zustand", "binary_sensor.kuche_fenster_ikea_zustand"),
+        ("sensor.old_battery", "sensor.new_battery"),
+    ]]
+
+
+def test_free_old_name_reconciles_crash_after_remote_rename(tmp_path):
+    class LiveEntityRegistry(_ER):
+        def __init__(self):
+            super().__init__()
+            self.entries = {
+                "sensor.old_swapout": {"id": "registry-old", "entity_id": "sensor.old_swapout"}
+            }
+
+        async def list_entities(self):
+            return list(self.entries.values())
+
+    job = _job()
+    job["old_device_entities"] = ["sensor.old"]
+    job["old_entity_registry_ids"] = {"sensor.old": "registry-old"}
+    job["old_free_targets"] = {"sensor.old": "sensor.old_swapout"}
+    registry = LiveEntityRegistry()
+    executor = SwapExecutor(
+        SwapJobStore(str(tmp_path)),
+        _DR(),
+        registry,
+        _DU(),
+        _Bridge(),
+        _RS(),
+        timestamp="t1",
+    )
+
+    import asyncio
+
+    asyncio.run(executor._free_old_name(job))
+
+    assert job["old_freed"] == {"sensor.old": "sensor.old_swapout"}
+    assert registry.calls == []
 
 
 # --------------------------------------------------------------------------- #

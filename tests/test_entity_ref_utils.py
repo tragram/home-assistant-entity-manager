@@ -1,7 +1,11 @@
 """Tests for the central, word-boundary-safe entity reference replacement."""
 
+import pytest
+
 from entity_ref_utils import (
+    EntityReferenceConflict,
     extract_entity_ids,
+    replace_entities_in_obj,
     replace_entity_in_obj,
     replace_entity_ref_in_string,
 )
@@ -75,6 +79,37 @@ def test_replace_in_obj_updates_entity_id_keys():
     data = {"entities": {"light.old": {"state": "on"}}}
     assert replace_entity_in_obj(data, "light.old", "light.new") is True
     assert data == {"entities": {"light.new": {"state": "on"}}}
+
+
+def test_replace_in_obj_rejects_existing_target_key():
+    data = {
+        "entities": {
+            "light.old": {"state": "off"},
+            "light.new": {"state": "on"},
+        }
+    }
+
+    with pytest.raises(EntityReferenceConflict):
+        replace_entity_in_obj(data, "light.old", "light.new")
+
+    assert data["entities"] == {
+        "light.old": {"state": "off"},
+        "light.new": {"state": "on"},
+    }
+
+
+def test_batch_replacement_handles_key_swap_without_data_loss():
+    data = {"entities": {"light.one": {"state": "on"}, "light.two": {"state": "off"}}}
+
+    assert replace_entities_in_obj(data, {"light.one": "light.two", "light.two": "light.one"}) is True
+    assert data == {"entities": {"light.two": {"state": "on"}, "light.one": {"state": "off"}}}
+
+
+def test_batch_replacement_does_not_cascade_chained_values():
+    data = {"entities": ["light.one", "light.two"]}
+
+    assert replace_entities_in_obj(data, {"light.one": "light.two", "light.two": "light.three"}) is True
+    assert data == {"entities": ["light.two", "light.three"]}
 
 
 def test_replace_same_entity_id_is_no_op():

@@ -376,7 +376,7 @@
     "save_templates": "Guardar plantillas",
     "templates_saved": "Plantillas de nombres guardadas",
     "api_access": "Acceso API externo",
-    "api_access_hint": "Genera un token para que una herramienta externa pueda leer el registro de renombrados a través de un puerto asignado. El token se muestra una sola vez y se almacena únicamente como hash. Sin token, la API solo es accesible mediante Ingress.",
+    "api_access_hint": "Genera un token para el acceso autenticado a la API mediante un puerto asignado (con DIRECT_ACCESS_MODE=token). El token se muestra una sola vez y se almacena únicamente como hash. El acceso directo está desactivado de forma predeterminada.",
     "api_token_status_none": "Ningún token configurado",
     "api_token_status_active": "Token activo",
     "api_token_created": "Creado",

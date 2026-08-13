@@ -18,7 +18,10 @@ Example resolution for "battery" with German user preference:
 import json
 import logging
 from pathlib import Path
+import threading
 from typing import Any, Dict, List, Optional
+
+from atomic_json import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +169,7 @@ class TypeMappings:
         """
         self.system_mappings_path = Path(system_mappings_path) if system_mappings_path else None
         self.user_mappings_path = Path(user_mappings_path)
+        self._lock = threading.RLock()
 
         self.system_mappings = self._load_system_mappings()
         self.user_mappings = self._load_user_mappings()
@@ -197,18 +201,9 @@ class TypeMappings:
         return {}
 
     def _save_user_mappings(self) -> None:
-        """Save user mappings to file."""
-        try:
-            # Ensure directory exists
-            self.user_mappings_path.parent.mkdir(parents=True, exist_ok=True)
-
-            data = {"user_mappings": self.user_mappings}
-            with open(self.user_mappings_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
-            logger.info(f"User mappings saved: {len(self.user_mappings)} entries")
-        except Exception as e:
-            logger.error(f"Error saving user mappings: {e}")
+        """Save user mappings atomically and surface write failures."""
+        write_json_atomic(self.user_mappings_path, {"user_mappings": self.user_mappings})
+        logger.info("User mappings saved: %d entries", len(self.user_mappings))
 
     def get_translation(
         self,
@@ -277,8 +272,10 @@ class TypeMappings:
             translation: The user's preferred translation (e.g., "Batterieladung")
         """
         type_key_lower = type_key.lower()
-        self.user_mappings[type_key_lower] = translation
-        self._save_user_mappings()
+        with self._lock:
+            candidate = {**self.user_mappings, type_key_lower: translation}
+            write_json_atomic(self.user_mappings_path, {"user_mappings": candidate})
+            self.user_mappings = candidate
         logger.info(f"User mapping set: {type_key_lower} -> {translation}")
 
     def remove_user_mapping(self, type_key: str) -> bool:
@@ -292,12 +289,15 @@ class TypeMappings:
             True if removed, False if not found
         """
         type_key_lower = type_key.lower()
-        if type_key_lower in self.user_mappings:
-            del self.user_mappings[type_key_lower]
-            self._save_user_mappings()
+        with self._lock:
+            if type_key_lower not in self.user_mappings:
+                return False
+            candidate = dict(self.user_mappings)
+            del candidate[type_key_lower]
+            write_json_atomic(self.user_mappings_path, {"user_mappings": candidate})
+            self.user_mappings = candidate
             logger.info(f"User mapping removed: {type_key_lower}")
             return True
-        return False
 
     def get_user_mapping(self, type_key: str) -> Optional[str]:
         """Get user mapping for a type key if it exists."""

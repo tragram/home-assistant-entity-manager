@@ -356,7 +356,7 @@
     "save_templates": "Vorlagen speichern",
     "templates_saved": "Namensvorlagen gespeichert",
     "api_access": "Externer API-Zugriff",
-    "api_access_hint": "Erzeuge einen Token, damit ein externes Tool das Umbenennungs-Log über einen freigegebenen Port lesen kann. Der Token wird nur einmal angezeigt und ausschließlich als Hash gespeichert. Ohne Token bleibt die API nur über Ingress erreichbar.",
+    "api_access_hint": "Erzeuge einen Token für authentifizierten API-Zugriff über einen freigegebenen Port (mit DIRECT_ACCESS_MODE=token). Der Token wird nur einmal angezeigt und ausschließlich als Hash gespeichert. Direkter Zugriff ist standardmäßig deaktiviert.",
     "api_token_status_none": "Kein Token konfiguriert",
     "api_token_status_active": "Token aktiv",
     "api_token_created": "Erstellt",

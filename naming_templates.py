@@ -6,9 +6,11 @@ import logging
 from pathlib import Path
 import re
 from string import Formatter
+import threading
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 from hierarchy_manager import normalize_name
+from atomic_json import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,7 @@ class NamingTemplates:
     def __init__(self, storage_path: str = "naming_templates.json") -> None:
         """Initialize naming templates from ``storage_path``."""
         self.storage_path = Path(storage_path)
+        self._lock = threading.RLock()
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load_data()
 
@@ -136,10 +139,7 @@ class NamingTemplates:
 
     def _write_data(self, data: Mapping[str, Any]) -> None:
         """Atomically write template data."""
-        temporary_path = self.storage_path.with_suffix(self.storage_path.suffix + ".tmp")
-        with temporary_path.open("w", encoding="utf-8") as file:
-            json.dump(data, file, indent=2, ensure_ascii=False)
-        temporary_path.replace(self.storage_path)
+        write_json_atomic(self.storage_path, data)
 
     def _save_data(self) -> None:
         """Atomically persist the current configuration."""
@@ -204,20 +204,23 @@ class NamingTemplates:
         """Validate and save templates, detecting whether they match a preset."""
         clean_templates = {key: value.strip() for key, value in templates.items()}
         self.validate_templates(clean_templates)
-        previous = self.get_templates()
-        if previous != clean_templates:
-            history = self.data.setdefault("history", [])
-            if previous not in history:
-                history.insert(0, previous)
-            del history[5:]
-        self.data.update(
-            {
-                "version": SCHEMA_VERSION,
-                "preset": self.matching_preset(clean_templates) or "custom",
-                "templates": clean_templates,
-            }
-        )
-        self._save_data()
+        with self._lock:
+            candidate = deepcopy(self.data)
+            previous = deepcopy(candidate["templates"])
+            if previous != clean_templates:
+                history = candidate.setdefault("history", [])
+                if previous not in history:
+                    history.insert(0, previous)
+                del history[5:]
+            candidate.update(
+                {
+                    "version": SCHEMA_VERSION,
+                    "preset": self.matching_preset(clean_templates) or "custom",
+                    "templates": clean_templates,
+                }
+            )
+            self._write_data(candidate)
+            self.data = candidate
         return self.get_config()
 
     def apply_preset(self, preset: str) -> Dict[str, Any]:

@@ -226,6 +226,44 @@ class SwapExecutor:
         job["updated"] = self.timestamp
         self.store.save(job)
 
+    async def _live_entities(self) -> Optional[List[Dict[str, Any]]]:
+        """Return the live entity registry when the injected client supports it."""
+        list_entities = getattr(self.entity_registry, "list_entities", None)
+        if not callable(list_entities):
+            return None
+        return await list_entities()
+
+    async def _rename_entity_reconciled(
+        self,
+        source: str,
+        target: str,
+        friendly_name: Optional[str] = None,
+        expected_registry_id: Optional[str] = None,
+    ) -> None:
+        """Rename an entity or recognize that the exact registry entry already moved."""
+        entries = await self._live_entities()
+        if entries is None:
+            await self.entity_registry.rename_entity(source, target, friendly_name)
+            return
+
+        by_entity_id = {entry.get("entity_id"): entry for entry in entries}
+        source_entry = by_entity_id.get(source)
+        target_entry = by_entity_id.get(target)
+        if source_entry is not None:
+            actual_registry_id = source_entry.get("id")
+            if expected_registry_id and actual_registry_id != expected_registry_id:
+                raise RuntimeError(f"Registry identity changed for {source}")
+            if target != source and target_entry is not None:
+                raise RuntimeError(f"Target entity ID already exists: {target}")
+            await self.entity_registry.rename_entity(source, target, friendly_name)
+            return
+        if target_entry is not None:
+            actual_registry_id = target_entry.get("id")
+            if expected_registry_id and actual_registry_id != expected_registry_id:
+                raise RuntimeError(f"Target {target} belongs to a different registry entry")
+            return
+        raise RuntimeError(f"Neither source {source} nor planned target {target} exists")
+
     # --- Öffentliche Ausführung ---
 
     async def run(self, job: Dict[str, Any]) -> Dict[str, Any]:
@@ -297,12 +335,26 @@ class SwapExecutor:
         self._log(job, STATE_FREEING_OLD_NAME, f"Old device renamed to '{temp_name}'")
 
         freed = job.setdefault("old_freed", {})
+        targets = job.setdefault("old_free_targets", {})
+        registry_ids = job.get("old_entity_registry_ids", {})
         for old_id in job.get("old_device_entities", []):
             if old_id in freed:
                 continue  # idempotent (Resume)
             domain, _, obj = old_id.partition(".")
-            temp_id = f"{domain}.{obj}_swapout"
-            await self.entity_registry.rename_entity(old_id, temp_id)
+            temp_id = targets.get(old_id)
+            if not temp_id:
+                temp_id = f"{domain}.{obj}_swapout"
+                live = await self._live_entities()
+                live_ids = {entry.get("entity_id") for entry in live or []}
+                if temp_id in live_ids:
+                    temp_id = f"{domain}.{obj}_swapout_{job['job_id'][:8]}"
+                targets[old_id] = temp_id
+                self._persist(job)
+            await self._rename_entity_reconciled(
+                old_id,
+                temp_id,
+                expected_registry_id=registry_ids.get(old_id),
+            )
             freed[old_id] = temp_id
             self._log(job, STATE_FREEING_OLD_NAME, f"Freed old entity {old_id} -> {temp_id}")
             self._persist(job)
@@ -340,6 +392,8 @@ class SwapExecutor:
         unabhängig von device_class/Übersetzungen. Pro-Entity idempotent.
         """
         renamed = job.setdefault("new_renamed", {})
+        targets = job.setdefault("new_rename_targets", {})
+        registry_ids = job.get("new_entity_registry_ids", {})
         target_prefix = _common_prefix_tokens([_object_id(i) for i in job.get("old_device_entities", [])])
         new_prefix = _common_prefix_tokens([_object_id(i) for i in job.get("new_device_entities", [])])
         # Friendly-Name nachziehen: alter Device-Name (des neuen Geräts) -> Zielname,
@@ -356,12 +410,20 @@ class SwapExecutor:
                 continue  # idempotent (Resume)
             suffix = _entity_name(current, new_prefix)  # object_id ohne neuen Device-Präfix
             target_obj = "_".join(target_prefix + ([suffix] if suffix else []))
-            target = f"{_domain(current)}.{target_obj}" if target_obj else current
+            target = targets.get(current) or (f"{_domain(current)}.{target_obj}" if target_obj else current)
+            if current not in targets:
+                targets[current] = target
+                self._persist(job)
 
             new_friendly = self._swap_friendly(current, old_dev_name, target_name)
 
             if target != current or new_friendly:
-                await self.entity_registry.rename_entity(current, target, new_friendly)
+                await self._rename_entity_reconciled(
+                    current,
+                    target,
+                    new_friendly,
+                    registry_ids.get(current),
+                )
                 msg = f"Renamed entity {current} -> {target}"
                 if new_friendly:
                     msg += f" ('{new_friendly}')"
@@ -389,21 +451,42 @@ class SwapExecutor:
         """Referenzen umbiegen: ursprüngliche alte ID -> finale neue ID (pro Paar idempotent)."""
         states = list(self.states_by_id.values()) or None
         renamed = job.get("new_renamed", {})
-        for pair in job["entity_mapping"]:
-            if pair.get("status") == "deps_done":
-                continue
-            old_id = pair["old_entity_id"]
-            current = pair["new_entity_id_current"]
-            new_id = renamed.get(current, current)  # finale ID nach RENAMING_ENTITIES
-            await self.dependency_updater.update_all_dependencies(old_id, new_id, states)
-            # Dashboards (Lovelace, Storage-Mode) ebenfalls umbiegen
+        pending = [pair for pair in job["entity_mapping"] if pair.get("status") != "deps_done"]
+        rename_pairs = [
+            (pair["old_entity_id"], renamed.get(pair["new_entity_id_current"], pair["new_entity_id_current"]))
+            for pair in pending
+        ]
+        if rename_pairs:
+            batch_update = getattr(self.dependency_updater, "update_all_dependencies_batch", None)
+            if callable(batch_update):
+                dependency_result = await batch_update(rename_pairs, cached_states=states)
+            else:
+                dependency_result = None
+                for old_id, new_id in rename_pairs:
+                    result = await self.dependency_updater.update_all_dependencies(old_id, new_id, states)
+                    if result and result.get("total_failed", 0):
+                        dependency_result = result
+                        break
+            if dependency_result and dependency_result.get("total_failed", 0):
+                raise RuntimeError(
+                    f"{dependency_result['total_failed']} dependency updates failed for the entity rename batch"
+                )
+
             if self.lovelace_updater is not None:
                 try:
-                    changed = await self.lovelace_updater.update_all_dashboards(old_id, new_id)
+                    dashboard_batch = getattr(self.lovelace_updater, "update_dashboard_renames", None)
+                    if callable(dashboard_batch):
+                        changed = await dashboard_batch(rename_pairs)
+                    else:
+                        changed = []
+                        for old_id, new_id in rename_pairs:
+                            changed.extend(await self.lovelace_updater.update_all_dashboards(old_id, new_id))
                     if changed:
                         self._log(job, STATE_UPDATING_DEPENDENCIES, f"Dashboards updated: {', '.join(changed)}")
-                except Exception as e:  # noqa: BLE001 - dashboards must not block the swap
-                    self._log(job, STATE_UPDATING_DEPENDENCIES, f"Dashboard update failed for {old_id}: {e}")
+                except Exception as error:
+                    raise RuntimeError(f"Dashboard batch update failed: {error}") from error
+
+        for pair, (old_id, new_id) in zip(pending, rename_pairs):
             pair["new_entity_id_target"] = new_id
             pair["status"] = "deps_done"
             self._log(job, STATE_UPDATING_DEPENDENCIES, f"Rewired references {old_id} -> {new_id}")
@@ -415,7 +498,11 @@ class SwapExecutor:
             old_did = job.get("old_device", {}).get("device_id")
             new_did = job.get("new_device", {}).get("device_id")
             if old_did and new_did and old_did != new_did:
-                await self.dependency_updater.update_all_dependencies(old_did, new_did, states)
+                dependency_result = await self.dependency_updater.update_all_dependencies(old_did, new_did, states)
+                if dependency_result and dependency_result.get("total_failed", 0):
+                    raise RuntimeError(
+                        f"{dependency_result['total_failed']} device-reference updates failed for {old_did}"
+                    )
                 self._log(job, STATE_UPDATING_DEPENDENCIES, f"Rewired device triggers {old_did} -> {new_did}")
             job["device_id_rewired"] = True
             self._persist(job)

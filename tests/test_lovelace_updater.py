@@ -102,6 +102,18 @@ def test_batch_renames_save_each_dashboard_once():
     assert ws._cfgs["lovelace"]["cards"][0]["entities"] == ["sensor.new_energy", "sensor.new_voltage"]
 
 
+def test_batch_dashboard_renames_are_simultaneous():
+    ws = MockWS(
+        dashboards=[{"url_path": "lovelace", "mode": "storage"}],
+        configs={"lovelace": {"cards": [{"entities": ["sensor.a", "sensor.b"]}]}},
+    )
+    updater = LovelaceUpdater(ws)
+
+    _run(updater.update_dashboard_renames([("sensor.a", "sensor.b"), ("sensor.b", "sensor.c")]))
+
+    assert ws._cfgs["lovelace"]["cards"][0]["entities"] == ["sensor.b", "sensor.c"]
+
+
 def test_scan_renames_finds_yaml_only():
     # storage already rewritten -> only yaml dashboards still contain the old id
     ws = MockWS(

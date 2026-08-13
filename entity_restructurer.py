@@ -64,10 +64,12 @@ class EntityRestructurer:
             language: Language code for translations (default: "en")
         """
         self.client = client
-        self.devices = {}
-        self.areas = {}
-        self.floors = {}
-        self.entities = {}
+        self._structure: Dict[str, Dict[str, Dict[str, Any]]] = {
+            "devices": {},
+            "areas": {},
+            "floors": {},
+            "entities": {},
+        }
         self.naming_overrides = naming_overrides or NamingOverrides()
         self.naming_templates = naming_templates or NamingTemplates()
         self.language = language
@@ -116,6 +118,42 @@ class EntityRestructurer:
             "media_player": "media_player",
         }
 
+    def _set_structure_part(self, key: str, value: Dict[str, Dict[str, Any]]) -> None:
+        """Replace one registry while preserving immutable snapshot semantics."""
+        self._structure = {**self._structure, key: value}
+
+    @property
+    def devices(self) -> Dict[str, Dict[str, Any]]:
+        return self._structure["devices"]
+
+    @devices.setter
+    def devices(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self._set_structure_part("devices", value)
+
+    @property
+    def areas(self) -> Dict[str, Dict[str, Any]]:
+        return self._structure["areas"]
+
+    @areas.setter
+    def areas(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self._set_structure_part("areas", value)
+
+    @property
+    def floors(self) -> Dict[str, Dict[str, Any]]:
+        return self._structure["floors"]
+
+    @floors.setter
+    def floors(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self._set_structure_part("floors", value)
+
+    @property
+    def entities(self) -> Dict[str, Dict[str, Any]]:
+        return self._structure["entities"]
+
+    @entities.setter
+    def entities(self, value: Dict[str, Dict[str, Any]]) -> None:
+        self._set_structure_part("entities", value)
+
     @staticmethod
     async def _list_registry(ws_client: Any, registry: str) -> List[Dict[str, Any]]:
         """Return all entries from a Home Assistant registry."""
@@ -159,10 +197,7 @@ class EntityRestructurer:
         # If no WebSocket client was provided, use REST API fallback
         if not ws_client:
             logger.warning("No WebSocket client available, using limited mode")
-            self.areas = {}
-            self.floors = {}
-            self.devices = {}
-            self.entities = {}
+            self._structure = {"areas": {}, "floors": {}, "devices": {}, "entities": {}}
             return
 
         registry_specs = (
@@ -171,16 +206,21 @@ class EntityRestructurer:
             ("devices", "device", "id", None, logging.ERROR),
             ("entities", "entity", "entity_id", None, logging.ERROR),
         )
+        loaded: Dict[str, Dict[str, Dict[str, Any]]] = {}
         for attribute, registry, key, fallback_key, error_level in registry_specs:
             try:
                 entries = await self._list_registry(ws_client, registry)
                 indexed = self._index_registry(entries, key, fallback_key)
-                setattr(self, attribute, indexed)
+                loaded[attribute] = indexed
                 logger.info("Loaded %d %s registry entries", len(indexed), registry)
             except Exception as error:
                 # Floors do not exist on older Home Assistant versions.
                 logger.log(error_level, "Failed to load %s registry: %s", registry, error)
-                setattr(self, attribute, {})
+                loaded[attribute] = {}
+
+        # Publish one complete generation so readers cannot observe registries
+        # from different refreshes.
+        self._structure = loaded
 
         maintained_count = sum(1 for entity in self.entities.values() if "maintained" in entity.get("labels", []))
         if maintained_count:

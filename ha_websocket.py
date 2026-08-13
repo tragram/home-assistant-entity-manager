@@ -4,22 +4,41 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 import websockets
-from websockets.client import WebSocketClientProtocol
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CONNECT_TIMEOUT = 15.0
+DEFAULT_IO_TIMEOUT = 30.0
+
 
 class HomeAssistantWebSocket:
-    def __init__(self, url: str, token: str):
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        *,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        io_timeout: float = DEFAULT_IO_TIMEOUT,
+    ):
         self.url = url
         self.token = token
-        self.websocket: Optional[WebSocketClientProtocol] = None
+        self.connect_timeout = connect_timeout
+        self.io_timeout = io_timeout
+        self.websocket: Optional[Any] = None
         self.message_id = 1
         self.pending_messages: Dict[int, asyncio.Future] = {}
 
     async def connect(self):
         # Erhöhe das max_size Limit auf 10MB für große Entity Registries
-        self.websocket = await websockets.connect(self.url, max_size=10 * 1024 * 1024)  # 10MB statt default 1MB
+        self.websocket = await asyncio.wait_for(
+            websockets.connect(
+                self.url,
+                max_size=10 * 1024 * 1024,
+                open_timeout=self.connect_timeout,
+                close_timeout=self.connect_timeout,
+            ),
+            timeout=self.connect_timeout,
+        )
 
         auth_msg = await self._receive_message()
         if auth_msg["type"] != "auth_required":
@@ -35,18 +54,29 @@ class HomeAssistantWebSocket:
 
     async def disconnect(self):
         if self.websocket:
-            await self.websocket.close()
+            try:
+                await asyncio.wait_for(self.websocket.close(), timeout=self.connect_timeout)
+            except TimeoutError:
+                logger.warning("Timed out while closing the Home Assistant WebSocket")
+            self.websocket = None
 
     async def _send_message(self, message: Dict[str, Any]) -> int:
         if "id" not in message and message["type"] != "auth":
             message["id"] = self.message_id
             self.message_id += 1
 
-        await self.websocket.send(json.dumps(message))
+        if self.websocket is None:
+            raise RuntimeError("WebSocket is not connected")
+        await asyncio.wait_for(self.websocket.send(json.dumps(message)), timeout=self.io_timeout)
         return message.get("id", 0)
 
     async def _receive_message(self) -> Dict[str, Any]:
-        message = await self.websocket.recv()
+        if self.websocket is None:
+            raise RuntimeError("WebSocket is not connected")
+        try:
+            message = await asyncio.wait_for(self.websocket.recv(), timeout=self.io_timeout)
+        except TimeoutError as error:
+            raise TimeoutError(f"Home Assistant WebSocket did not respond within {self.io_timeout:g}s") from error
         return json.loads(message)
 
     async def call_service(self, domain: str, service: str, data: Optional[Dict] = None) -> Dict[str, Any]:

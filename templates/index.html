@@ -3998,16 +3998,6 @@
                     this.searchQuery[missingEntityId] = '';
                 },
 
-                selectVirtualDevice(deviceId) {
-                    this.selectedDevice = deviceId;
-                    this.selectedEntities = [];
-
-                    // If broken refs selected, load them
-                    if (deviceId === '__broken_refs__') {
-                        this.loadBrokenReferences();
-                    }
-                },
-
                 // Load hierarchy data
                 async loadHierarchy() {
                     this.loading = true;
@@ -4476,10 +4466,15 @@
                 // Select a virtual device group (automations, scenes, helpers, etc.)
                 selectVirtualDevice(virtualDeviceId) {
                     this.selectedDevice = virtualDeviceId;
+                    this.selectedEntities = [];
                     this.selectedDeviceData = null;
                     this.devicePreviewBaseName = null;  // Clear preview when switching devices
                     this.resetEntityIds = false;
                     this.saveState();
+
+                    if (virtualDeviceId === '__broken_refs__') {
+                        this.loadBrokenReferences();
+                    }
 
                     // Mobile: Navigate to entities
                     if (this.isMobileView()) {

@@ -34,6 +34,8 @@ import threading
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
+from atomic_json import write_json_atomic
+
 logger = logging.getLogger(__name__)
 
 # Generic job states. Swap jobs keep their own richer state machine and are only
@@ -91,11 +93,8 @@ class JobStore:
         """Write a job atomically (temp file + ``os.replace``)."""
         job["version"] = self.schema_version
         path = self._path(job["job_id"])
-        tmp = path.with_suffix(".json.tmp")
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(job, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, path)
+            write_json_atomic(path, job)
         except Exception as e:
             logger.error(f"Failed to save job {job.get('job_id')}: {e}")
             raise
@@ -113,7 +112,7 @@ class JobStore:
             return None
 
     def list_jobs(self) -> List[Dict[str, Any]]:
-        """Return all readable jobs, skipping unreadable files."""
+        """Return readable jobs newest-first, skipping unreadable files."""
         jobs = []
         for path in sorted(self.storage_dir.glob("*.json")):
             try:
@@ -121,7 +120,7 @@ class JobStore:
                     jobs.append(json.load(f))
             except (json.JSONDecodeError, IOError) as e:
                 logger.warning(f"Skipping unreadable job {path.name}: {e}")
-        return jobs
+        return sorted(jobs, key=lambda job: job.get("created", ""), reverse=True)
 
     def list_unfinished(self) -> List[Dict[str, Any]]:
         """Return all jobs that are not in a terminal state (for reconnect UI)."""
@@ -132,6 +131,28 @@ class JobStore:
         path = self._path(job_id)
         if path.exists():
             path.unlink()
+
+    def prune_terminal(self, *, max_age_days: float = 7) -> int:
+        """Delete terminal jobs older than ``max_age_days`` and return a count.
+
+        Invalid timestamps are retained rather than guessed at. A non-positive
+        retention disables pruning, which is useful while diagnosing a job.
+        """
+        if max_age_days <= 0:
+            return 0
+        cutoff = datetime.now(timezone.utc).timestamp() - (max_age_days * 86400)
+        removed = 0
+        for job in self.list_jobs():
+            if job.get("state") not in self.terminal_states:
+                continue
+            try:
+                created = datetime.fromisoformat(job["created"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if created < cutoff:
+                self.delete(job["job_id"])
+                removed += 1
+        return removed
 
 
 # --------------------------------------------------------------------------- #

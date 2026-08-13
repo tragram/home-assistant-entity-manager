@@ -13,8 +13,9 @@ RUN mkdir -p static/js static/fonts && npm ci && npm run build
 
 FROM $BUILD_FROM
 
-# Runtime build dependencies for Python packages
-RUN apk add --no-cache \
+# Build dependencies are removed after pip finishes so they do not inflate the
+# runtime image or add unnecessary executable tooling.
+RUN apk add --no-cache --virtual .build-deps \
     gcc \
     musl-dev \
     python3-dev
@@ -24,7 +25,8 @@ COPY --from=frontend /build/static/ /app/static/
 
 # Install Python dependencies
 COPY requirements.txt /tmp/
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
+    && apk del .build-deps
 
 # Copy application files
 # Copy ALL root-level Python modules so a newly added module can never be

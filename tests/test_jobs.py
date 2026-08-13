@@ -1,6 +1,7 @@
 """Tests for the generic background-job infrastructure (store, context, worker)."""
 
 import threading
+from datetime import datetime, timedelta, timezone
 
 import jobs
 from jobs import STATE_COMPLETED, STATE_FAILED, STATE_QUEUED, STATE_RUNNING, JobContext, JobStore, JobWorker, new_job
@@ -55,6 +56,29 @@ def test_store_delete(tmp_path):
     store.delete("j")
     assert store.load("j") is None
     store.delete("j")  # deleting a missing job is a no-op
+
+
+def test_store_lists_newest_job_first(tmp_path):
+    store = _store(tmp_path)
+    old = new_job("t", {}, job_id="old") | {"created": "2025-01-01T00:00:00+00:00"}
+    new = new_job("t", {}, job_id="new") | {"created": "2025-01-02T00:00:00+00:00"}
+    store.save(old)
+    store.save(new)
+    assert [job["job_id"] for job in store.list_jobs()] == ["new", "old"]
+
+
+def test_store_prunes_only_old_terminal_jobs(tmp_path):
+    store = _store(tmp_path)
+    old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    recent = datetime.now(timezone.utc).isoformat()
+    store.save(new_job("t", {}, job_id="old-done") | {"state": STATE_COMPLETED, "created": old})
+    store.save(new_job("t", {}, job_id="recent-done") | {"state": STATE_COMPLETED, "created": recent})
+    store.save(new_job("t", {}, job_id="old-running") | {"state": STATE_RUNNING, "created": old})
+
+    assert store.prune_terminal(max_age_days=7) == 1
+    assert store.load("old-done") is None
+    assert store.load("recent-done") is not None
+    assert store.load("old-running") is not None
 
 
 def test_store_atomic_write_leaves_no_tmp(tmp_path):

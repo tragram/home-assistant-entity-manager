@@ -15,7 +15,7 @@ Wird für den Geräte-Austausch genutzt:
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from entity_ref_utils import extract_entity_ids, replace_entity_in_obj
+from entity_ref_utils import extract_entity_ids, replace_entities_in_obj
 from ha_websocket import HomeAssistantWebSocket
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,7 @@ class LovelaceUpdater:
     async def update_dashboard_renames(self, rename_pairs: List[Tuple[str, str]]) -> List[str]:
         """Ersetzt old->new in allen Storage-Dashboards. Gibt geänderte url_paths zurück."""
         changed: List[str] = []
+        replacements = {old: new for old, new in rename_pairs if old != new}
         for url_path, mode in await self._dashboard_targets():
             try:
                 config = await self.get_config(url_path)
@@ -127,9 +128,8 @@ class LovelaceUpdater:
                 if mode == "yaml":
                     logger.info("Dashboard %s is YAML-managed and requires a manual update", url_path)
                     continue
-                replaced = False
-                for old_entity_id, new_entity_id in applicable:
-                    replaced |= replace_entity_in_obj(config, old_entity_id, new_entity_id, replace_embedded=True)
+                applicable_map = {old: replacements[old] for old, _new in applicable}
+                replaced = replace_entities_in_obj(config, applicable_map, replace_embedded=True)
                 if not replaced:
                     logger.warning("Could not replace entity references in dashboard %s", url_path or "default")
                     continue

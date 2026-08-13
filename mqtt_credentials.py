@@ -14,7 +14,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-import aiohttp
+from ha_http import ha_client_session
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ async def get_mqtt_credentials() -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             async with session.get(SUPERVISOR_MQTT_URL, headers={"Authorization": f"Bearer {token}"}) as resp:
                 if resp.status != 200:
                     logger.info(

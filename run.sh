@@ -1,10 +1,11 @@
 #!/usr/bin/with-contenv bashio
 
 # Configure logging
-export LOG_LEVEL=$(bashio::config 'log_level' || echo 'info')
-export ENABLE_DISABLED_ENTITIES=$(bashio::config 'enable_disabled_entities' || echo 'false')
-export ENABLE_Z2M_BRIDGE=$(bashio::config 'enable_z2m_bridge' || echo 'true')
-export Z2M_BASE_TOPIC=$(bashio::config 'z2m_base_topic' || echo 'zigbee2mqtt')
+export LOG_LEVEL="$(bashio::config 'log_level' || echo 'info')"
+export DIRECT_ACCESS_MODE="$(bashio::config 'direct_access_mode' || echo 'disabled')"
+export ENABLE_DISABLED_ENTITIES="$(bashio::config 'enable_disabled_entities' || echo 'false')"
+export ENABLE_Z2M_BRIDGE="$(bashio::config 'enable_z2m_bridge' || echo 'true')"
+export Z2M_BASE_TOPIC="$(bashio::config 'z2m_base_topic' || echo 'zigbee2mqtt')"
 
 bashio::log.info "Starting Entity Manager..."
 
@@ -15,6 +16,7 @@ export HA_TOKEN="${SUPERVISOR_TOKEN}"
 bashio::log.info "Environment setup complete"
 bashio::log.info "HA_URL: ${HA_URL}"
 bashio::log.info "LOG_LEVEL: ${LOG_LEVEL}"
+bashio::log.info "DIRECT_ACCESS_MODE: ${DIRECT_ACCESS_MODE}"
 bashio::log.info "ENABLE_DISABLED_ENTITIES: ${ENABLE_DISABLED_ENTITIES}"
 
 # Check if web_ui.py exists
@@ -25,9 +27,8 @@ else
     ls -la /app/
 fi
 
-# Start the Flask application
+# Replace the shell with Python so SIGTERM reaches the server and its exit code
+# reaches Supervisor. Piping through a logging loop previously hid both.
 bashio::log.info "Starting Flask application..."
 cd /app
-python3 -u web_ui.py 2>&1 | while IFS= read -r line; do
-    bashio::log.info "Flask: ${line}"
-done
+exec python3 -u web_ui.py

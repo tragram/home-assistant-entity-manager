@@ -9,3 +9,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 # add-on's default /data mount does not exist. Importing web_ui creates
 # DATA_DIR-backed stores at import time, so this must run before collection.
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="ha-em-test-"))
+# Most endpoint tests exercise handler behaviour rather than access policy.
+# Access-control tests override this explicitly for every policy mode.
+os.environ.setdefault("DIRECT_ACCESS_MODE", "trusted")

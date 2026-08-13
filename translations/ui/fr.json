@@ -376,7 +376,7 @@
     "save_templates": "Enregistrer les modèles",
     "templates_saved": "Modèles de noms enregistrés",
     "api_access": "Accès API externe",
-    "api_access_hint": "Générez un jeton pour qu'un outil externe puisse lire le journal de renommage via un port exposé. Le jeton n'est affiché qu'une seule fois et n'est stocké que sous forme de hachage. Sans jeton, l'API reste accessible uniquement via Ingress.",
+    "api_access_hint": "Générez un jeton pour un accès authentifié à l'API via un port exposé (avec DIRECT_ACCESS_MODE=token). Le jeton n'est affiché qu'une seule fois et n'est stocké que sous forme de hachage. L'accès direct est désactivé par défaut.",
     "api_token_status_none": "Aucun jeton configuré",
     "api_token_status_active": "Jeton actif",
     "api_token_created": "Créé",

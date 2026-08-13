@@ -144,34 +144,36 @@ GET /api/rename_log?entity_id=light.kitchen_old
 The lookup follows multi-hop rename chains (`a → b → c`) and returns
 `"found": false` when the id was never renamed.
 
-#### External access (API token)
+#### Direct access and API tokens
 
 By default the web UI and API are reachable **only through Home Assistant
 Ingress** (i.e. only for logged-in HA users); the add-on's port is not exposed.
 
-To let an **external** tool read the rename log:
+To let an **external** tool use the API:
 
 1. Open the add-on's web UI → **Settings → External API access** and click
    **Generate token**. The token is shown **once** — copy it now. Only a hash of
    it is stored; it cannot be retrieved again (regenerate to get a new one).
 2. Map the add-on's port (Configuration → Network) to a host port.
 
-With a token generated:
+Set `DIRECT_ACCESS_MODE=token` when publishing the port. With a token generated:
 
 - **Ingress** traffic (the web UI) keeps working unchanged, no token needed.
-- **Direct** (non-Ingress) requests are accepted **only** for
-  `GET /api/rename_log` and **only** with a matching bearer token. Every other
-  endpoint — including token management and all renaming/write operations —
-  stays Ingress-exclusive, so an exposed port never grants write access.
+- **Direct** (non-Ingress) API requests require the matching bearer token.
+- Token generation and revocation stay Ingress-only.
 
 ```bash
 curl -H "Authorization: Bearer em_…" \
   "http://<ha-host>:<mapped-port>/api/rename_log?entity_id=light.kitchen_old"
 ```
 
-Without a generated token, direct access stays closed and behaviour is
-unchanged. Generating a new token or revoking it (Settings) immediately
-invalidates the previous one.
+Direct API access is disabled by default. Generating a new token or revoking it
+immediately invalidates the previous one. `DIRECT_ACCESS_MODE=trusted` removes
+API authentication and is intended only for a private development LAN.
+
+In the add-on configuration this is the **Direct access mode** option:
+`disabled` (default), `token`, or `trusted`. Never expose a `trusted` port beyond
+a private development network.
 
 ## Safety Features
 
@@ -190,7 +192,6 @@ invalidates the previous one.
 ├── repository.json        # Repository metadata
 ├── web_ui.py              # Flask web interface
 ├── entity_restructurer.py # Core renaming logic
-├── dependency_scanner.py  # Find entity references
 ├── dependency_updater.py  # Update references
 ├── entity_registry.py     # Entity management
 ├── device_registry.py     # Device management
@@ -238,8 +239,23 @@ docker build --build-arg BUILD_FROM="ghcr.io/home-assistant/amd64-base-python:3.
 docker run --rm -it -p 5000:5000 \
   -e HA_URL="http://your-ha-instance:8123" \
   -e HA_TOKEN="your-long-lived-token" \
+  -e DIRECT_ACCESS_MODE="trusted" \
   local/entity_manager
 ```
+
+Open `http://<development-computer>:5000` from another machine on the LAN. Use
+`DIRECT_ACCESS_MODE=token` instead if the network is not fully trusted.
+
+### Running Python tests on Windows
+
+```powershell
+py -3.12 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-test.txt
+& .\.venv\Scripts\python.exe -m pytest -q
+```
+
+`pytest.ini` keeps temporary test data inside the repository, avoiding Windows
+temp-directory permission differences between terminals and sandboxed tools.
 
 ## Contributing
 

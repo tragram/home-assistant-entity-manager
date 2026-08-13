@@ -14,7 +14,10 @@ come directly from the Home Assistant API.
 import json
 import logging
 from pathlib import Path
+import threading
 from typing import Any, Dict, Optional
+
+from atomic_json import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class NamingOverrides:
             storage_path: Path to the JSON storage file
         """
         self.storage_path = Path(storage_path)
+        self._lock = threading.RLock()
         # Ensure directory exists
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load_data()
@@ -81,24 +85,23 @@ class NamingOverrides:
             logger.info("Migration to v3: Removed area overrides")
 
     def _save_data(self) -> None:
-        """Speichere Overrides"""
-        try:
-            with open(self.storage_path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
-            logger.info(f"Overrides gespeichert: {len(self.data['entities'])} entities")
-        except Exception as e:
-            logger.error(f"Fehler beim Speichern der Overrides: {e}")
+        """Persist overrides atomically and surface write failures to callers."""
+        write_json_atomic(self.storage_path, self.data)
+        logger.info("Saved %d entity overrides", len(self.data["entities"]))
 
     # === Entity Overrides ===
 
     def set_entity_override(self, registry_id: str, name: str, type_override: Optional[str] = None) -> None:
         """Setze Entity Name Override"""
-        if "entities" not in self.data:
-            self.data["entities"] = {}
-        self.data["entities"][registry_id] = {"name": name}
-        if type_override:
-            self.data["entities"][registry_id]["type"] = type_override
-        self._save_data()
+        with self._lock:
+            entities = dict(self.data.get("entities", {}))
+            entry = {"name": name}
+            if type_override:
+                entry["type"] = type_override
+            entities[registry_id] = entry
+            candidate = {**self.data, "entities": entities}
+            write_json_atomic(self.storage_path, candidate)
+            self.data = candidate
         logger.info(f"Entity override gesetzt: {registry_id} -> {name}")
 
     def get_entity_override(self, registry_id: str) -> Optional[Dict[str, str]]:
@@ -107,10 +110,15 @@ class NamingOverrides:
 
     def remove_entity_override(self, registry_id: str) -> None:
         """Entferne Entity Override"""
-        if "entities" in self.data and registry_id in self.data["entities"]:
-            del self.data["entities"][registry_id]
-            self._save_data()
-            logger.info(f"Entity override entfernt: {registry_id}")
+        with self._lock:
+            if registry_id not in self.data.get("entities", {}):
+                return
+            entities = dict(self.data["entities"])
+            del entities[registry_id]
+            candidate = {**self.data, "entities": entities}
+            write_json_atomic(self.storage_path, candidate)
+            self.data = candidate
+        logger.info(f"Entity override entfernt: {registry_id}")
 
     # === Bulk Operations ===
 
@@ -120,8 +128,10 @@ class NamingOverrides:
 
     def clear_all(self) -> None:
         """Clear all overrides while preserving schema version."""
-        self.data = {"version": SCHEMA_VERSION, "entities": {}}
-        self._save_data()
+        candidate = {"version": SCHEMA_VERSION, "entities": {}}
+        with self._lock:
+            write_json_atomic(self.storage_path, candidate)
+            self.data = candidate
         logger.info("All overrides cleared")
 
     # === Statistics ===

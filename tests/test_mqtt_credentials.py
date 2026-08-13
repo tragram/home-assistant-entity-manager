@@ -38,7 +38,7 @@ class _FakeSession:
 
 def _patch(monkeypatch, status, data):
     monkeypatch.setenv("SUPERVISOR_TOKEN", "tok")
-    monkeypatch.setattr(aiohttp, "ClientSession", lambda: _FakeSession(_FakeResp(status, data)))
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda **kwargs: _FakeSession(_FakeResp(status, data)))
 
 
 def _run(coro):

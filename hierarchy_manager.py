@@ -11,7 +11,7 @@ Changes at higher levels automatically cascade to all descendants.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -88,7 +88,7 @@ class AreaNode:
 
     id: str
     name: str  # Name from HA API
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def display_name(self) -> str:
@@ -110,7 +110,7 @@ class DeviceNode:
     area_id: Optional[str] = None
     manufacturer: Optional[str] = None
     model: Optional[str] = None
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def get_display_name(self, area: Optional[AreaNode]) -> str:
         """
@@ -155,7 +155,7 @@ class EntityNode:
     base_name: Optional[str] = None  # Entity type/name (e.g., "Licht", "Temperatur")
     override_name: Optional[str] = None  # User override for base name
     disabled_by: Optional[str] = None
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def get_effective_base_name(self) -> str:
         """Get the effective base name (override or original)."""
@@ -482,7 +482,7 @@ class HierarchyManager:
 
         area = self.areas[area_id]
         area.name = new_name  # Temporarily update for cascade calculation
-        area.updated_at = datetime.utcnow()
+        area.updated_at = datetime.now(timezone.utc)
 
         # Collect all affected entities
         affected = {}
@@ -490,12 +490,12 @@ class HierarchyManager:
         # Cascade to devices and their entities
         for device_id in self._area_to_devices.get(area_id, set()):
             device = self.devices[device_id]
-            device.updated_at = datetime.utcnow()
+            device.updated_at = datetime.now(timezone.utc)
 
             # Cascade to device's entities
             for registry_id in self._device_to_entities.get(device_id, set()):
                 entity = self.entities[registry_id]
-                entity.updated_at = datetime.utcnow()
+                entity.updated_at = datetime.now(timezone.utc)
 
                 new_id = entity.get_entity_id(device, area)
                 friendly_name = entity.get_display_name(device, area)
@@ -504,7 +504,7 @@ class HierarchyManager:
         # Cascade to directly assigned entities (no device)
         for registry_id in self._area_to_entities.get(area_id, set()):
             entity = self.entities[registry_id]
-            entity.updated_at = datetime.utcnow()
+            entity.updated_at = datetime.now(timezone.utc)
 
             new_id = entity.get_entity_id(None, area)
             friendly_name = entity.get_display_name(None, area)
@@ -533,7 +533,7 @@ class HierarchyManager:
 
         device = self.devices[device_id]
         device.name = new_name  # Temporarily update for cascade calculation
-        device.updated_at = datetime.utcnow()
+        device.updated_at = datetime.now(timezone.utc)
 
         area = self.areas.get(device.area_id) if device.area_id else None
 
@@ -542,7 +542,7 @@ class HierarchyManager:
 
         for registry_id in self._device_to_entities.get(device_id, set()):
             entity = self.entities[registry_id]
-            entity.updated_at = datetime.utcnow()
+            entity.updated_at = datetime.now(timezone.utc)
 
             new_id = entity.get_entity_id(device, area)
             friendly_name = entity.get_display_name(device, area)
@@ -568,7 +568,7 @@ class HierarchyManager:
 
         entity = self.entities[registry_id]
         entity.override_name = new_name
-        entity.updated_at = datetime.utcnow()
+        entity.updated_at = datetime.now(timezone.utc)
 
         # Save to persistent storage
         if self.naming_overrides:

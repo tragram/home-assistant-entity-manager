@@ -121,7 +121,7 @@ def test_device_rename_cascades_to_generated_entity_id_without_reset(restructure
     restructurer.devices["device-1"]["name"] = "Thermostat"
 
     assert restructurer.generate_new_entity_id(
-        "sensor.living_room_controller_temperature",
+        "sensor.existing_id",
         {},
         preserved_suffix,
     ) == ("sensor.living_room_thermostat_temperature", "Temperature")

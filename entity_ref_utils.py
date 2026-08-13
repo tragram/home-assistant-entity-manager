@@ -2,7 +2,7 @@
 """
 Entity Reference Utilities - Zentrale, wortgrenzen-sichere Ersetzung von Entity-IDs.
 
-Wird von dependency_updater.py, dependency_scanner.py und lovelace_updater.py
+Wird von dependency_updater.py und lovelace_updater.py
 gemeinsam genutzt, damit die Ersetzungslogik nur an einer Stelle lebt.
 
 Wichtig fuer den Geraete-Austausch: alte und neue entity_id haben voellig
@@ -16,7 +16,12 @@ z.B. `..._tur` faelschlich in `..._tur_2` treffen. Daher:
 """
 
 import re
+from collections.abc import Mapping
 from typing import Any, Tuple
+
+
+class EntityReferenceConflict(ValueError):
+    """Raised when a rename would overwrite an existing dictionary key."""
 
 _ENTITY_ID_RE = re.compile(r"\b([a-z_]+\.[a-z0-9_]+)\b")
 
@@ -88,6 +93,88 @@ def replace_entity_ref_in_string(
     return value, False
 
 
+def replace_entity_refs_in_string(
+    value: str,
+    replacements: Mapping[str, str],
+    replace_embedded: bool = False,
+) -> Tuple[str, bool]:
+    """Replace multiple IDs simultaneously, without rename-chain cascading."""
+    replacements = {old: new for old, new in replacements.items() if old != new}
+    if not replacements:
+        return value, False
+    if value in replacements:
+        return replacements[value], True
+
+    has_jinja = ("{{" in value and "}}" in value) or ("{%" in value and "%}" in value)
+    if has_jinja:
+        updated = _ENTITY_ID_RE.sub(lambda match: replacements.get(match.group(1), match.group(1)), value)
+        if updated != value:
+            return updated, True
+
+    if replace_embedded:
+        alternatives = "|".join(re.escape(entity_id) for entity_id in sorted(replacements, key=len, reverse=True))
+        pattern = re.compile(rf"(?<![a-z0-9_])(?:{alternatives})(?![a-z0-9_])")
+        updated = pattern.sub(lambda match: replacements.get(match.group(0), match.group(0)), value)
+        if updated != value:
+            return updated, True
+    return value, False
+
+
+def replace_entities_in_obj(
+    data: Any,
+    replacements: Mapping[str, str],
+    replace_embedded: bool = False,
+) -> bool:
+    """Apply a complete rename map recursively and atomically in-place.
+
+    Dictionary keys are planned as a set before mutation, so swaps and chains
+    retain every value while true many-to-one collisions are rejected.
+    """
+    replacements = {old: new for old, new in replacements.items() if old != new}
+    if not replacements:
+        return False
+    changed = False
+
+    if isinstance(data, dict):
+        remapped: dict[Any, Any] = {}
+        original_for_target: dict[Any, Any] = {}
+        keys_changed = False
+        for key, value in data.items():
+            target = replacements.get(key, key) if isinstance(key, str) else key
+            if target in remapped:
+                previous = original_for_target[target]
+                raise EntityReferenceConflict(
+                    f"Cannot replace entity references: {previous} and {key} both target {target}"
+                )
+            remapped[target] = value
+            original_for_target[target] = key
+            keys_changed = keys_changed or target != key
+        if keys_changed:
+            data.clear()
+            data.update(remapped)
+            changed = True
+
+        for key, value in list(data.items()):
+            if isinstance(value, str):
+                updated, did_change = replace_entity_refs_in_string(value, replacements, replace_embedded)
+                if did_change:
+                    data[key] = updated
+                    changed = True
+            elif isinstance(value, (dict, list)):
+                changed = replace_entities_in_obj(value, replacements, replace_embedded) or changed
+
+    elif isinstance(data, list):
+        for index, value in enumerate(data):
+            if isinstance(value, str):
+                updated, did_change = replace_entity_refs_in_string(value, replacements, replace_embedded)
+                if did_change:
+                    data[index] = updated
+                    changed = True
+            elif isinstance(value, (dict, list)):
+                changed = replace_entities_in_obj(value, replacements, replace_embedded) or changed
+    return changed
+
+
 def replace_entity_in_obj(
     data: Any,
     old_entity_id: str,
@@ -106,46 +193,4 @@ def replace_entity_in_obj(
     Returns:
         True, wenn irgendwo etwas geaendert wurde.
     """
-    if old_entity_id == new_entity_id:
-        return False
-
-    changed = False
-
-    if isinstance(data, dict):
-        # Scene configs store entity IDs as keys in their ``entities`` mapping.
-        if old_entity_id in data:
-            data[new_entity_id] = data.pop(old_entity_id)
-            changed = True
-
-        for key, value in list(data.items()):
-            if isinstance(value, str):
-                new_value, did_change = replace_entity_ref_in_string(
-                    value,
-                    old_entity_id,
-                    new_entity_id,
-                    replace_embedded,
-                )
-                if did_change:
-                    data[key] = new_value
-                    changed = True
-            elif isinstance(value, (dict, list)):
-                if replace_entity_in_obj(value, old_entity_id, new_entity_id, replace_embedded):
-                    changed = True
-
-    elif isinstance(data, list):
-        for i, item in enumerate(data):
-            if isinstance(item, str):
-                new_value, did_change = replace_entity_ref_in_string(
-                    item,
-                    old_entity_id,
-                    new_entity_id,
-                    replace_embedded,
-                )
-                if did_change:
-                    data[i] = new_value
-                    changed = True
-            elif isinstance(item, (dict, list)):
-                if replace_entity_in_obj(item, old_entity_id, new_entity_id, replace_embedded):
-                    changed = True
-
-    return changed
+    return replace_entities_in_obj(data, {old_entity_id: new_entity_id}, replace_embedded)

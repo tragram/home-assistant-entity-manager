@@ -1,6 +1,6 @@
 {
   "name": "Entity Manager",
-  "version": "1.6.7",
+  "version": "1.7.0",
   "slug": "entity_manager",
   "description": "Manage and standardize Home Assistant entity names",
   "arch": [
@@ -32,12 +32,14 @@
   },
   "options": {
     "log_level": "info",
+    "direct_access_mode": "disabled",
     "enable_disabled_entities": false,
     "enable_z2m_bridge": true,
     "z2m_base_topic": "zigbee2mqtt"
   },
   "schema": {
     "log_level": "list(debug|info|warning|error)?",
+    "direct_access_mode": "list(disabled|token|trusted)?",
     "enable_disabled_entities": "bool?",
     "enable_z2m_bridge": "bool?",
     "z2m_base_topic": "str?"

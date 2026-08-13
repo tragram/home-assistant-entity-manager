@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-from entity_ref_utils import replace_entity_in_obj
+from entity_ref_utils import EntityReferenceConflict, replace_entities_in_obj, replace_entity_in_obj
+from ha_http import ha_client_session
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class DependencyUpdater:
     async def get_states(self) -> List[Dict[str, Any]]:
         """Return all current Home Assistant states."""
         url = f"{self.base_url}/api/states"
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             async with session.get(url, headers=self.headers) as response:
                 if response.status != 200:
                     raise RuntimeError(f"Failed to fetch Home Assistant states: HTTP {response.status}")
@@ -33,7 +34,7 @@ class DependencyUpdater:
     async def _get_config(self, kind: str, config_id: str) -> Optional[Dict[str, Any]]:
         """Fetch one editable scene, script, or automation configuration."""
         url = f"{self.base_url}/api/config/{kind}/config/{config_id}"
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             async with session.get(url, headers=self.headers) as response:
                 if response.status == 200:
                     return await response.json()
@@ -43,7 +44,7 @@ class DependencyUpdater:
     async def _save_config(self, kind: str, config_id: str, config: Dict[str, Any]) -> bool:
         """Save one editable scene, script, or automation configuration."""
         url = f"{self.base_url}/api/config/{kind}/config/{config_id}"
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             async with session.post(url, headers=self.headers, json=config) as response:
                 if response.status != 200:
                     logger.error("Failed to update %s %s: HTTP %s", kind, config_id, response.status)
@@ -59,7 +60,7 @@ class DependencyUpdater:
     ) -> tuple[int, Any]:
         """Call one Home Assistant REST endpoint and return status plus JSON."""
         url = f"{self.base_url}{path}"
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             async with session.request(method, url, headers=self.headers, json=payload) as response:
                 try:
                     body = await response.json()
@@ -265,6 +266,44 @@ class DependencyUpdater:
                 # current so a later member rename cannot restore an old ID.
                 state["attributes"]["entity_id"] = updated_members
 
+    async def update_group_dependencies_batch(
+        self,
+        replacements: Dict[str, str],
+        states: List[Dict[str, Any]],
+        results: Dict[str, Any],
+    ) -> None:
+        """Update every group once for a complete entity rename map."""
+        entries = await self.get_group_config_entries()
+        for entry in entries:
+            flow = await self.start_group_options_flow(entry["entry_id"])
+            if not flow:
+                self._record_result(results, "groups", entry.get("title") or entry["entry_id"], False)
+                continue
+            options = self.group_options_from_flow(flow)
+            members = options.get("entities")
+            if not isinstance(members, list):
+                await self.abort_group_options_flow(flow["flow_id"])
+                continue
+            updated_members = [replacements.get(member, member) for member in members]
+            if updated_members == members:
+                await self.abort_group_options_flow(flow["flow_id"])
+                continue
+            success = await self.update_group_config_entry(entry, flow, options, updated_members)
+            self._record_result(results, "groups", entry.get("title") or entry["entry_id"], success)
+
+        for state in states:
+            entity_id = state.get("entity_id", "")
+            members = state.get("attributes", {}).get("entity_id")
+            if not entity_id.startswith("group.") or not isinstance(members, list):
+                continue
+            updated_members = [replacements.get(member, member) for member in members]
+            if updated_members == members:
+                continue
+            success = await self.update_legacy_group(state, updated_members)
+            self._record_result(results, "groups", entity_id, success)
+            if success:
+                state["attributes"]["entity_id"] = updated_members
+
     @staticmethod
     def _new_results() -> Dict[str, Any]:
         """Create an empty reference-update result."""
@@ -275,6 +314,7 @@ class DependencyUpdater:
             "groups": {"success": [], "failed": []},
             "total_success": 0,
             "total_failed": 0,
+            "errors": [],
         }
 
     @staticmethod
@@ -290,41 +330,63 @@ class DependencyUpdater:
         new_entity_id: str,
         cached_states: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Replace an entity ID in every editable config and group."""
+        """Replace one entity ID in every editable config and group."""
+        return await self.update_all_dependencies_batch(
+            [(old_entity_id, new_entity_id)],
+            cached_states=cached_states,
+        )
+
+    async def update_all_dependencies_batch(
+        self,
+        rename_pairs: List[tuple[str, str]],
+        cached_states: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Apply all entity renames while loading and saving each config once."""
+        replacements = {old: new for old, new in rename_pairs if old != new}
         states = cached_states if cached_states is not None else await self.get_states()
         results = self._new_results()
+        if not replacements:
+            return results
 
         try:
-            await self.update_group_dependencies(old_entity_id, new_entity_id, states, results)
-        except Exception:  # noqa: BLE001 - other dependency types must still update
-            logger.exception("Failed to update group references for %s -> %s", old_entity_id, new_entity_id)
+            await self.update_group_dependencies_batch(replacements, states, results)
+        except Exception as error:  # noqa: BLE001 - other dependency types must still update
+            logger.exception("Failed to update group references for rename batch")
+            results["errors"].append({"kind": "groups", "error": str(error)})
+            self._record_result(results, "groups", "group references", False)
 
         for state in states:
             entity_id = state.get("entity_id", "")
             attributes = state.get("attributes", {})
-
+            kind = None
+            config_id = None
+            getter = None
+            saver = None
             if entity_id.startswith("scene."):
-                numeric_id = attributes.get("id")
-                if not numeric_id:
-                    continue
-                config = await self.get_scene_config(numeric_id)
-                if config is not None and replace_entity_in_obj(config, old_entity_id, new_entity_id):
-                    success = await self.update_scene_config(numeric_id, config)
-                    self._record_result(results, "scenes", entity_id, success)
-
+                kind, config_id = "scenes", attributes.get("id")
+                getter, saver = self.get_scene_config, self.update_scene_config
             elif entity_id.startswith("script."):
-                config = await self.get_script_config(entity_id)
-                if config is not None and replace_entity_in_obj(config, old_entity_id, new_entity_id):
-                    success = await self.update_script_config(entity_id, config)
-                    self._record_result(results, "scripts", entity_id, success)
-
+                kind, config_id = "scripts", entity_id
+                getter, saver = self.get_script_config, self.update_script_config
             elif entity_id.startswith("automation."):
-                numeric_id = attributes.get("id")
-                if not numeric_id:
-                    continue
-                config = await self.get_automation_config(numeric_id)
-                if config is not None and replace_entity_in_obj(config, old_entity_id, new_entity_id):
-                    success = await self.update_automation_config(numeric_id, config)
-                    self._record_result(results, "automations", entity_id, success)
+                kind, config_id = "automations", attributes.get("id")
+                getter, saver = self.get_automation_config, self.update_automation_config
+
+            if not kind or not config_id:
+                continue
+            config = await getter(config_id)
+            if config is None:
+                self._record_result(results, kind, entity_id, False)
+                results["errors"].append({"kind": kind, "id": entity_id, "error": "Configuration is not editable"})
+                continue
+            try:
+                changed = replace_entities_in_obj(config, replacements)
+            except EntityReferenceConflict as error:
+                self._record_result(results, kind, entity_id, False)
+                results["errors"].append({"kind": kind, "id": entity_id, "error": str(error)})
+                continue
+            if changed:
+                success = await saver(config_id, config)
+                self._record_result(results, kind, entity_id, success)
 
         return results

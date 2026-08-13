@@ -10,10 +10,10 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import aiohttp
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO)
+from ha_http import ha_client_session
+
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -167,7 +167,7 @@ class ReferenceChecker:
 
     async def get_states(self) -> List[Dict]:
         """Hole alle States von Home Assistant."""
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             url = f"{self.base_url}/api/states"
             async with session.get(url, headers=self.headers) as response:
                 if response.status == 200:
@@ -274,7 +274,7 @@ class ReferenceChecker:
 
     async def _get_automation_configs(self) -> List[Dict]:
         """Hole alle Automation-Konfigurationen."""
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             # Erst die Liste aller Automations
             url = f"{self.base_url}/api/states"
             async with session.get(url, headers=self.headers) as response:
@@ -309,7 +309,7 @@ class ReferenceChecker:
 
     async def _get_scene_configs(self) -> List[Dict]:
         """Hole alle Scene-Konfigurationen."""
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             url = f"{self.base_url}/api/states"
             async with session.get(url, headers=self.headers) as response:
                 if response.status != 200:
@@ -342,7 +342,7 @@ class ReferenceChecker:
 
     async def _get_script_configs(self) -> List[Dict]:
         """Hole alle Script-Konfigurationen."""
-        async with aiohttp.ClientSession() as session:
+        async with ha_client_session() as session:
             url = f"{self.base_url}/api/states"
             async with session.get(url, headers=self.headers) as response:
                 if response.status != 200:

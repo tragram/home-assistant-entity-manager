@@ -5,7 +5,6 @@ Web UI für Home Assistant Entity Renamer - Add-on Version
 
 import asyncio
 from datetime import datetime, timezone
-import html
 import ipaddress
 import json
 import logging
@@ -16,11 +15,10 @@ from typing import Any, Optional
 import unicodedata
 import uuid
 
-import aiohttp
 from flask import Flask, abort, jsonify, make_response, render_template, request, send_from_directory
-from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from access_control import authorize_direct_api
 from api_token_store import ApiTokenStore
 from bridge_adapters import build_bridge
 from dependency_updater import DependencyUpdater
@@ -30,10 +28,12 @@ from device_swap import SwapExecutor, SwapJobStore, propose_mapping
 from entity_registry import EntityRegistry
 from entity_restructurer import EntityRestructurer
 from ha_client import HomeAssistantClient
+from ha_http import ha_client_session
 from ha_websocket import HomeAssistantWebSocket
 from hierarchy_manager import normalize_name
 from jobs import TERMINAL_STATES, JobStore, JobWorker, new_job
 from lovelace_updater import LovelaceUpdater
+from logging_config import configure_logging
 from naming_overrides import NamingOverrides
 from naming_templates import NamingTemplateError, NamingTemplates
 from reference_checker import ReferenceChecker
@@ -70,27 +70,10 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 # the real TCP peer before ProxyFix trusts forwarded headers (X-Forwarded-For).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.wsgi_app = _CapturePeerIP(app.wsgi_app)
-CORS(app)
-
-# External API access is guarded by a generated token (see ApiTokenStore): it is
-# created on demand from the web UI, shown once, and stored only as a hash. When
-# a token exists the add-on's HTTP port may be exposed for external, read-only
-# access to the rename audit log:
-#   - Ingress requests (from the Supervisor network) pass through unchanged, so
-#     the web UI keeps working without any token.
-#   - Direct (non-Ingress) requests are rejected unless they target
-#     GET /api/rename_log with a valid bearer token. Every other /api/* route,
-#     including token management and the write endpoints, stays Ingress-exclusive.
-# With no token generated the gate is inactive; the port is closed by default,
-# so /api/* is only reachable via Ingress anyway.
 
 # HA Supervisor's internal Docker network (hassio). Ingress proxies add-on
 # requests from this range; direct host/LAN access originates elsewhere.
 _SUPERVISOR_NETWORK = ipaddress.ip_network("172.30.32.0/23")
-
-# /api/* paths reachable with a token over a directly-exposed port. Read-only.
-_EXTERNAL_API_PATHS = frozenset({"/api/rename_log"})
-
 
 def _is_ingress_request() -> bool:
     """Return True when the request's real TCP peer is in the Supervisor network.
@@ -115,40 +98,33 @@ def _provided_token() -> str:
 
 @app.before_request
 def _enforce_api_access() -> None:
-    """Gate /api/* routes when an API token is configured.
+    """Gate direct /api/* routes according to the explicit access mode.
 
-    Ingress requests are trusted (HA already authenticated the user). Direct
-    requests are limited to the read-only rename-log lookup with a valid token;
-    everything else is refused.
+    Ingress requests are trusted because Home Assistant already authenticated
+    the user. Direct access is disabled by default. Local development can opt
+    into ``DIRECT_ACCESS_MODE=trusted``; API clients can use ``token`` mode.
     """
-    store = renamer_state["api_token_store"]
-    if not store.exists():
-        return None
     path = request.path
     if not path.startswith("/api/"):
         return None
     if _is_ingress_request():
         return None
-    # Direct (non-Ingress) access from here on.
-    if path not in _EXTERNAL_API_PATHS or request.method != "GET":
-        abort(403)
-    if not store.verify(_provided_token()):
-        abort(401)
+    store = renamer_state["api_token_store"]
+    provided = _provided_token()
+    decision = authorize_direct_api(
+        mode=os.getenv("DIRECT_ACCESS_MODE"),
+        path=path,
+        token_configured=store.exists(),
+        token_valid=bool(provided) and store.verify(provided),
+    )
+    if not decision.allowed:
+        abort(decision.status or 403)
     return None
 
 
-# Setup logging to both console and file
-log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-logging.basicConfig(
-    level=logging.DEBUG,
-    format=log_format,
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler("web_ui.log", mode="a"),  # File output
-    ],
-)
+# Supervisor captures stdout. Local file logging is opt-in through LOG_FILE.
+configure_logging()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Persistent data directory. Defaults to the add-on's /data mount; overridable
 # via DATA_DIR for local runs, tests and CI where /data is not available.
@@ -188,6 +164,7 @@ EntityRegistry.rename_log = renamer_state["rename_log"]
 MAX_NAME_LENGTH = 255
 MAX_ENTITY_ID_LENGTH = 255
 MAX_REGISTRY_ID_LENGTH = 64
+MAX_BATCH_ENTITY_RENAMES = 5000
 
 # Valid characters for entity IDs (Home Assistant format: domain.object_id)
 ENTITY_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+$")
@@ -227,22 +204,12 @@ def sanitize_string(value: str, max_length: int = MAX_NAME_LENGTH) -> str:
 def sanitize_name(value: str, max_length: int = MAX_NAME_LENGTH) -> str:
     """
     Sanitize a display name (friendly name, area name, device name).
-    - All general sanitization
-    - Escape HTML to prevent XSS
-    - Remove script tags and event handlers
+
+    Names are persisted as plain text in Home Assistant. HTML escaping belongs
+    at the rendering boundary (Jinja autoescape / Alpine ``x-text``), otherwise
+    apostrophes and ampersands are stored as visible HTML entities.
     """
-    value = sanitize_string(value, max_length)
-    if value is None:
-        return None
-
-    # Remove any script tags or event handlers (case insensitive)
-    value = re.sub(r"<script[^>]*>.*?</script>", "", value, flags=re.IGNORECASE | re.DOTALL)
-    value = re.sub(r"on\w+\s*=", "", value, flags=re.IGNORECASE)
-
-    # Escape HTML entities to prevent XSS
-    value = html.escape(value, quote=True)
-
-    return value
+    return sanitize_string(value, max_length)
 
 
 def sanitize_entity_id(value: str) -> str:
@@ -796,7 +763,6 @@ def normalize_names():
     return jsonify({"normalized": normalized})
 
 
-@app.route("/api/preview", methods=["POST"])
 def preview_changes():
     """Zeige Vorschau der Änderungen für ausgewählte Area/Domain"""
     # Create new event loop for this request
@@ -1050,7 +1016,6 @@ async def _preview_changes_async():
         await ws.disconnect()
 
 
-@app.route("/api/execute", methods=["POST"])
 def execute_changes():
     """Führe ausgewählte Änderungen durch"""
     # Create new event loop for this request
@@ -1357,14 +1322,53 @@ def execute_direct():
     payload is read here in the request thread (no request context in the worker).
     """
     data = request.json or {}
-    entities = data.get("entities", [])
-    if not entities:
-        return jsonify({"error": "No entities selected"}), 400
+    entities, validation_error = _validate_entity_rename_batch(data.get("entities"))
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
 
     job = new_job("execute_direct", {"entities": entities}, job_id=uuid.uuid4().hex)
     renamer_state["job_store"].save(job)
     renamer_state["worker"].enqueue(job)
     return jsonify(job), 202
+
+
+def _validate_entity_rename_batch(raw_entities: Any) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Validate and normalize a direct entity-rename payload."""
+    if not isinstance(raw_entities, list) or not raw_entities:
+        return [], "No entities selected"
+    if len(raw_entities) > MAX_BATCH_ENTITY_RENAMES:
+        return [], f"A batch may contain at most {MAX_BATCH_ENTITY_RENAMES} entities"
+
+    normalized = []
+    old_ids: set[str] = set()
+    target_ids: set[str] = set()
+    for index, item in enumerate(raw_entities):
+        if not isinstance(item, dict):
+            return [], f"Entity rename at index {index} must be an object"
+        old_id = sanitize_entity_id(item.get("old_id"))
+        new_id = sanitize_entity_id(item.get("new_id"))
+        if not old_id or not new_id:
+            return [], f"Entity rename at index {index} has an invalid old_id or new_id"
+        if "new_name" not in item:
+            return [], f"Entity rename at index {index} is missing new_name"
+        if old_id in old_ids:
+            return [], f"Entity {old_id} appears more than once"
+        if new_id in target_ids:
+            return [], f"Target entity ID {new_id} appears more than once"
+
+        raw_name = item.get("new_name")
+        if raw_name is not None and not isinstance(raw_name, str):
+            return [], f"Entity rename at index {index} has an invalid new_name"
+        normalized.append(
+            {
+                "old_id": old_id,
+                "new_id": new_id,
+                "new_name": None if raw_name is None else sanitize_name(raw_name),
+            }
+        )
+        old_ids.add(old_id)
+        target_ids.add(new_id)
+    return normalized, None
 
 
 async def execute_direct_handler(job, ctx):
@@ -1456,28 +1460,6 @@ async def execute_direct_handler(job, ctx):
                 if should_enable:
                     logger.info(f"Enabled and renamed disabled entity: {old_id} -> {new_id}")
 
-                # Update configuration and dashboard references after an ID change.
-                dep_results = None
-                if not id_unchanged:
-                    try:
-                        dep_results = await dependency_updater.update_all_dependencies(old_id, new_id, cached_states)
-                    except Exception as error:  # noqa: BLE001 - the entity rename itself succeeded
-                        logger.warning("Reference update failed for %s -> %s: %s", old_id, new_id, error)
-                        results["dependency_warnings"].append(
-                            {"entity_id": old_id, "new_id": new_id, "error": str(error)}
-                        )
-
-                if dep_results and dep_results.get("total_failed", 0) > 0:
-                    # Collect all failed updates from scenes, scripts, automations
-                    failed_updates = (
-                        dep_results.get("scenes", {}).get("failed", [])
-                        + dep_results.get("scripts", {}).get("failed", [])
-                        + dep_results.get("automations", {}).get("failed", [])
-                    )
-                    results["dependency_warnings"].append(
-                        {"entity_id": old_id, "new_id": new_id, "failed_updates": failed_updates}
-                    )
-
                 results["success"].append(
                     {
                         "old_id": old_id,
@@ -1496,6 +1478,27 @@ async def execute_direct_handler(job, ctx):
             ctx.progress(index + 1, total, current=old_id)
 
         if dashboard_renames:
+            try:
+                dep_results = await dependency_updater.update_all_dependencies_batch(
+                    dashboard_renames,
+                    cached_states,
+                )
+                if dep_results.get("total_failed", 0):
+                    results["dependency_warnings"].append(
+                        {
+                            "rename_pairs": dashboard_renames,
+                            "failed_updates": {
+                                kind: dep_results.get(kind, {}).get("failed", [])
+                                for kind in ("scenes", "scripts", "automations", "groups")
+                            },
+                            "errors": dep_results.get("errors", []),
+                        }
+                    )
+            except Exception as error:  # noqa: BLE001 - entity renames already succeeded
+                logger.warning("Batch reference update failed: %s", error)
+                results["dependency_warnings"].append(
+                    {"rename_pairs": dashboard_renames, "error": str(error)}
+                )
             dashboard_results = await reference_updater.update_dashboards(dashboard_renames)
             results["dashboards_updated"] = dashboard_results["updated"]
             results["dashboard_manual_updates"].extend(dashboard_results["manual"])
@@ -1668,7 +1671,7 @@ async def _get_dependencies_async(entity_id):
                         # Get the automation config via REST API
                         config_url = f"{base_url}/api/config/automation/config/{automation_id}"
 
-                        async with aiohttp.ClientSession() as session:
+                        async with ha_client_session() as session:
                             async with session.get(config_url, headers=headers) as response:
                                 if response.status == 200:
                                     config = await response.json()
@@ -1917,7 +1920,6 @@ async def _get_all_entities_async():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/update_mapping", methods=["POST"])
 def update_mapping():
     """Aktualisiert das Mapping für eine einzelne Entity"""
     # Create new event loop for this request
@@ -1968,7 +1970,6 @@ async def _update_mapping_async():
         return jsonify({"error": "Entity nicht im Mapping gefunden"}), 404
 
 
-@app.route("/api/set_entity_override", methods=["POST"])
 def set_entity_override():
     """Setze Entity Name Override"""
     # Create new event loop for this request
@@ -2795,6 +2796,7 @@ async def rename_device_handler(job, ctx):
         entity_errors = []
         entities_skipped = 0
         dependencies_updated = 0
+        dependency_errors = []
         dashboards_updated = set()
         dashboard_manual_updates = []
         dashboard_renames = []
@@ -2846,24 +2848,6 @@ async def rename_device_handler(job, ctx):
                 # change. Dependency failures must not discard this pair.
                 if id_changed:
                     dashboard_renames.append((old_entity_id, new_entity_id))
-                    try:
-                        dep_results = await dependency_updater.update_all_dependencies(
-                            old_entity_id,
-                            new_entity_id,
-                            cached_states,
-                        )
-                        dep_count = dep_results.get("total_success", 0)
-                        dependencies_updated += dep_count
-                        if dep_count > 0:
-                            logger.info(f"  Updated {dep_count} dependencies")
-                    except Exception as error:  # noqa: BLE001 - the entity rename itself succeeded
-                        logger.warning(
-                            "Reference update failed for %s -> %s: %s",
-                            old_entity_id,
-                            new_entity_id,
-                            error,
-                        )
-                        ctx.log("WARNING", f"References for {old_entity_id}: {error}")
 
             except Exception as error:
                 entities_failed += 1
@@ -2881,6 +2865,18 @@ async def rename_device_handler(job, ctx):
             ctx.progress(processed, total, current=old_entity_id)
 
         if dashboard_renames:
+            try:
+                dep_results = await dependency_updater.update_all_dependencies_batch(
+                    dashboard_renames,
+                    cached_states,
+                )
+                dependencies_updated = dep_results.get("total_success", 0)
+                dependency_errors = dep_results.get("errors", [])
+                if dep_results.get("total_failed", 0):
+                    ctx.log("WARNING", f"{dep_results['total_failed']} reference updates failed")
+            except Exception as error:  # noqa: BLE001 - entity renames already succeeded
+                dependency_errors = [{"error": str(error)}]
+                ctx.log("WARNING", f"Reference batch: {error}")
             dashboard_results = await reference_updater.update_dashboards(dashboard_renames)
             dashboards_updated.update(dashboard_results["updated"])
             dashboard_manual_updates.extend(dashboard_results["manual"])
@@ -2910,6 +2906,7 @@ async def rename_device_handler(job, ctx):
             "entities_failed": entities_failed,
             "entity_errors": entity_errors,
             "dependencies_updated": dependencies_updated,
+            "dependency_errors": dependency_errors,
             "dashboards_updated": sorted(dashboards_updated),
             "dashboard_manual_updates": dashboard_manual_updates,
             "z2m_synced": z2m_sync.get("synced"),
@@ -2960,7 +2957,10 @@ async def rename_devices_handler(job: dict[str, Any], ctx: Any) -> dict[str, Any
         try:
             result = await rename_device_handler({"payload": item}, child_ctx)
             has_warnings = bool(
-                result.get("entities_failed") or result.get("z2m_failed") or result.get("dashboard_manual_updates")
+                result.get("entities_failed")
+                or result.get("dependency_errors")
+                or result.get("z2m_failed")
+                or result.get("dashboard_manual_updates")
             )
             status = "warning" if has_warnings else "completed"
             if has_warnings:
@@ -3330,7 +3330,10 @@ def _render_naming_contexts(
         for key, template in templates.items():
             rendered[key] = manager.render_template(template, values, normalize=key == "entity_id")
         domain = values.get("domain") or "sensor"
-        rendered["entity_id"] = f"{domain}.{rendered['entity_id']}"
+        object_id = rendered["entity_id"] or normalize_name(values.get("entity_id", ""))
+        if not object_id:
+            raise NamingTemplateError("The entity-ID template produced an empty entity ID")
+        rendered["entity_id"] = f"{domain}.{object_id}"
         results.append(rendered)
     return results
 
@@ -3707,6 +3710,8 @@ async def _swap_propose_async():
         # ALLE alten Entities (müssen freigemacht werden) und ALLE neuen (werden umbenannt)
         "old_device_entities": sorted(e["entity_id"] for e in old_ents),
         "new_device_entities": sorted(e["entity_id"] for e in new_ents),
+        "old_entity_registry_ids": {e["entity_id"]: e.get("id") for e in old_ents},
+        "new_entity_registry_ids": {e["entity_id"]: e.get("id") for e in new_ents},
         "proposal": proposal,
         "entity_mapping": [],
         "steps": {},
@@ -3845,6 +3850,16 @@ if __name__ == "__main__":
 
     # Fail any generic jobs left running by a previous process, then start the
     # background worker before serving requests.
+    try:
+        retention_days = float(os.getenv("JOB_RETENTION_DAYS", "7"))
+    except ValueError:
+        logger.warning("Invalid JOB_RETENTION_DAYS; using 7")
+        retention_days = 7
+    removed_jobs = renamer_state["job_store"].prune_terminal(max_age_days=retention_days)
+    removed_swaps = renamer_state["swap_store"].prune_terminal(max_age_days=retention_days)
+    if removed_jobs or removed_swaps:
+        logger.info("Pruned %s completed jobs and %s completed swaps", removed_jobs, removed_swaps)
+
     renamer_state["worker"].reconcile_on_start()
     renamer_state["worker"].start()
 

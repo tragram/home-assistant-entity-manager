@@ -356,7 +356,7 @@
     "save_templates": "Save templates",
     "templates_saved": "Naming templates saved",
     "api_access": "External API access",
-    "api_access_hint": "Generate a token to let an external tool read the rename log over a mapped port. The token is shown once and stored only as a hash. Without a token the API stays reachable only via Ingress.",
+    "api_access_hint": "Generate a token for authenticated API access over a mapped port (with DIRECT_ACCESS_MODE=token). The token is shown once and stored only as a hash. Direct access is disabled by default.",
     "api_token_status_none": "No token configured",
     "api_token_status_active": "Token active",
     "api_token_created": "Created",
