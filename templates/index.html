@@ -2278,6 +2278,13 @@
              x-show="batchRename.showReview"
              class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
              @click.self="closeBatchRenameReview()">
+            <!-- Fixed status: never participates in the review modal's layout. -->
+            <div x-show="batchRename.previewing"
+                 x-cloak
+                 class="fixed top-4 left-1/2 -translate-x-1/2 z-[60] pointer-events-none text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-3 py-1.5 shadow-sm flex items-center gap-2">
+                <i class="ri-loader-4-line animate-spin"></i>
+                <span x-text="t('batch_rename.building_preview')">Building preview…</span>
+            </div>
             <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
                 <div class="p-5 border-b flex items-center justify-between gap-3">
                     <div>
@@ -2304,13 +2311,6 @@
                 </div>
 
                 <div class="relative overflow-y-auto p-5 space-y-3">
-                    <!-- Overlay status: preview refreshes must not shift the rows. -->
-                    <div x-show="batchRename.previewing"
-                         x-cloak
-                         class="absolute top-3 right-5 z-10 pointer-events-none text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-3 py-1.5 shadow-sm flex items-center gap-2">
-                        <i class="ri-loader-4-line animate-spin"></i>
-                        <span x-text="t('batch_rename.building_preview')">Building preview…</span>
-                    </div>
                     <div x-show="batchRename.error" class="p-3 rounded bg-red-50 text-red-700 text-sm"
                          x-text="batchRename.error"></div>
 
@@ -2874,6 +2874,7 @@
                     drafts: {},
                     resetEntityIds: false,
                     previewing: false,
+                    previewGeneration: 0,
                     submitting: false,
                     error: ''
                 },
@@ -4257,18 +4258,22 @@
                 },
 
                 async refreshBatchRenamePreviews() {
+                    const previewGeneration = ++this.batchRename.previewGeneration;
                     this.batchRename.previewing = true;
                     this.batchRename.error = '';
                     try {
                         const entries = [];
-                        for (const row of this.batchRename.rows) {
-                            row.entity_changes = [];
-                            row.planned_entities = [];
-                            row.conflicts = [];
+                        const sourceRows = this.batchRename.rows;
+                        const previewByDevice = new Map(sourceRows.map(row => [row.device_id, {
+                            new_name: row.new_name,
+                            planned_entities: [],
+                            entity_changes: []
+                        }]));
+                        for (const row of sourceRows) {
                             const device = this.hierarchy.devices.find(item => item.id === row.device_id);
                             const entities = this.hierarchy.entities.filter(entity => entity.device_id === row.device_id);
                             entries.push({
-                                row,
+                                device_id: row.device_id,
                                 entity: null,
                                 kind: 'device',
                                 context: this.deviceNamingContext(device, row.base_name.trim())
@@ -4279,7 +4284,7 @@
                                     : null;
                                 const context = this.entityNamingContext(entity, resetSuffix);
                                 context.device = row.base_name.trim();
-                                entries.push({row, entity, kind: 'entity', context});
+                                entries.push({device_id: row.device_id, entity, kind: 'entity', context});
                             }
                         }
 
@@ -4293,11 +4298,16 @@
                         });
                         const data = await response.json();
                         if (!response.ok) throw new Error(data.error || 'Failed to preview device renames');
+                        // A newer refresh owns the UI now. Discard this response
+                        // without replacing its rows or clearing its spinner.
+                        if (previewGeneration !== this.batchRename.previewGeneration) return;
 
                         entries.forEach((entry, index) => {
                             const rendered = data.rendered[index];
+                            const preview = previewByDevice.get(entry.device_id);
                             if (entry.kind === 'device') {
-                                entry.row.new_name = rendered.device_name || entry.row.current_name;
+                                const sourceRow = sourceRows.find(row => row.device_id === entry.device_id);
+                                preview.new_name = rendered.device_name || sourceRow.current_name;
                                 return;
                             }
                             const plan = {
@@ -4314,24 +4324,38 @@
                                 expected_base: entry.context.entity,
                                 registry_id: entry.entity.registry_id
                             };
-                            entry.row.planned_entities.push(plan);
+                            preview.planned_entities.push(plan);
                             const nameChanged = plan.old_name !== plan.new_name;
                             if (plan.old_id !== plan.new_id || nameChanged) {
-                                entry.row.entity_changes.push(plan);
+                                preview.entity_changes.push(plan);
                             }
                         });
 
-                        this.validateBatchRenameRows();
+                        // Keep the existing rows visible while the request runs,
+                        // then commit one complete replacement. This prevents
+                        // expanded previews and the modal scrollbar from
+                        // collapsing/reappearing during recalculation.
+                        const nextRows = sourceRows.map(row => ({
+                            ...row,
+                            ...previewByDevice.get(row.device_id),
+                            conflicts: []
+                        }));
+                        this.validateBatchRenameRows(nextRows);
+                        this.batchRename.rows = nextRows;
                     } catch (error) {
-                        this.batchRename.error = error.message;
+                        if (previewGeneration === this.batchRename.previewGeneration) {
+                            this.batchRename.error = error.message;
+                        }
                     } finally {
-                        this.batchRename.previewing = false;
+                        if (previewGeneration === this.batchRename.previewGeneration) {
+                            this.batchRename.previewing = false;
+                        }
                     }
                 },
 
-                validateBatchRenameRows() {
+                validateBatchRenameRows(rows = this.batchRename.rows) {
                     const targets = new Map();
-                    for (const row of this.batchRename.rows) {
+                    for (const row of rows) {
                         row.conflicts = [];
                         if (!row.base_name.trim()) row.conflicts.push(this.t('batch_rename.empty_name'));
                         for (const plan of row.planned_entities) {
@@ -4352,7 +4376,7 @@
                             if (!owner.row.conflicts.includes(message)) owner.row.conflicts.push(message);
                         }
                     }
-                    for (const row of this.batchRename.rows) {
+                    for (const row of rows) {
                         row.has_changes = row.current_name !== row.new_name || row.entity_changes.length > 0;
                     }
                 },

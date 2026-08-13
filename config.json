@@ -1,6 +1,6 @@
 {
   "name": "Entity Manager",
-  "version": "1.6.6",
+  "version": "1.6.7",
   "slug": "entity_manager",
   "description": "Manage and standardize Home Assistant entity names",
   "arch": [

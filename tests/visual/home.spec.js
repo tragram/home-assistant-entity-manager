@@ -93,3 +93,75 @@ test("batch rename selects and unselects multiple areas independently", async ({
   expect(state.areaCount).toBe(2);
   expect(state.selectedAfterKitchenRemoved).toEqual(["office-light"]);
 });
+
+test("batch preview keeps expanded rows stable while recalculating", async ({ page }) => {
+  await page.goto("/");
+
+  const result = await page.evaluate(async () => {
+    const app = entityManager();
+    app.namingConfig = { templates: {} };
+    app.hierarchy = {
+      floors: [],
+      areas: [],
+      devices: [{ id: "light", name: "Old Light", base_name: "Light", area_id: null }],
+      entities: [{
+        id: "light.old_light",
+        registry_id: "registry-light",
+        device_id: "light",
+        original_name: "Light",
+        user_name: null,
+      }],
+    };
+    app.deviceNamingContext = () => ({});
+    app.entityNamingContext = () => ({ entity: "Light" });
+
+    const previousChanges = [{ old_id: "light.old_light", new_id: "light.preview" }];
+    app.batchRename.rows = [{
+      device_id: "light",
+      current_name: "Old Light",
+      base_name: "New Light",
+      new_name: "Old Light",
+      planned_entities: previousChanges,
+      entity_changes: previousChanges,
+      conflicts: [],
+      has_changes: true,
+      preview_open: true,
+    }];
+
+    let finishRequest;
+    window.fetch = () => new Promise((resolve) => { finishRequest = resolve; });
+    const refresh = app.refreshBatchRenamePreviews();
+    await Promise.resolve();
+    const whilePending = {
+      sameChanges: app.batchRename.rows[0].entity_changes === previousChanges,
+      previewOpen: app.batchRename.rows[0].preview_open,
+    };
+
+    finishRequest({
+      ok: true,
+      json: async () => ({ rendered: [
+        { device_name: "New Light" },
+        { entity_id: "light.new_light", entity_name: "Light" },
+      ] }),
+    });
+    await refresh;
+
+    return {
+      whilePending,
+      after: {
+        sameChanges: app.batchRename.rows[0].entity_changes === previousChanges,
+        previewOpen: app.batchRename.rows[0].preview_open,
+        newName: app.batchRename.rows[0].new_name,
+        previewing: app.batchRename.previewing,
+      },
+    };
+  });
+
+  expect(result.whilePending).toEqual({ sameChanges: true, previewOpen: true });
+  expect(result.after).toEqual({
+    sameChanges: false,
+    previewOpen: true,
+    newName: "New Light",
+    previewing: false,
+  });
+});
